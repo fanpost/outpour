@@ -78,6 +78,7 @@ pip install crier
 | **Discord** | `webhook_url` | Server announcements |
 | **LinkedIn** | `access_token` | Requires API access |
 | **Twitter/X** | `any` (copy-paste mode) | Generates tweet for manual posting |
+| **Substack** | none (browser session) | Notes via browser automation; run `crier login substack` |
 
 ### Platform Notes
 
@@ -100,6 +101,10 @@ pip install crier
 - Posts to channels/servers
 - Good for community announcements
 - Discord uses webhook embeds
+
+**Browser-automation Platforms** (Substack):
+- No API key. Run `crier login substack` once to capture a session.
+- Posts Notes by driving the web composer headlessly.
 
 ### Manual Mode
 

@@ -215,16 +215,17 @@ class TestDiscoverPackagePlatforms:
     def test_discovers_all_builtins(self):
         """All built-in platforms are discovered.
 
-        Locked to 15: the original 13, plus pleroma (added when the
-        Mastodon-API logic was extracted into the _fediverse base) and nostr.
-        The _fediverse base lives in ``_fediverse.py`` and the leading
-        underscore keeps it out of discovery.
+        Locked to 16: the original 13, plus pleroma (added when the
+        Mastodon-API logic was extracted into the _fediverse base), nostr, and
+        substack (the first BrowserPlatform subclass). The _fediverse and
+        _browser bases live in underscore-prefixed files that discovery skips.
         """
         result = _discover_package_platforms()
-        assert len(result) == 15
-        # _fediverse is internal; the base class must NOT be registered
+        assert len(result) == 16
+        # _fediverse and _browser are internal; the bases must NOT be registered
         assert "fediverseplatform" not in result
         assert "fediverse" not in result
+        assert "browserplatform" not in result
 
     def test_expected_platform_names(self):
         """Discovered platform names match the expected set."""
@@ -233,6 +234,7 @@ class TestDiscoverPackagePlatforms:
             "devto", "bluesky", "mastodon", "hashnode", "medium",
             "linkedin", "ghost", "buttondown", "telegram", "discord",
             "threads", "wordpress", "twitter", "pleroma", "nostr",
+            "substack",
         }
         assert set(result.keys()) == expected
 

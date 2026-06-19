@@ -83,11 +83,14 @@ ruff format --check src/
 - `format_thread()` adds thread indicators (numbered, emoji, or simple style)
 - Used by Bluesky and Mastodon `publish_thread()` implementations
 
-**Platform Categories** (15 total):
+**Platform Categories** (16 total):
 - Blog: devto, hashnode, medium, ghost, wordpress
 - Newsletter: buttondown
 - Social: bluesky, mastodon, pleroma, nostr, linkedin, threads, twitter (copy-paste mode)
 - Announcement: telegram, discord
+- Browser-automation: substack (Notes)
+
+Substack (`platforms/substack.py`) posts Notes by driving the web composer with Playwright, via the optional `[browser]` extra. It subclasses `BrowserPlatform` (`platforms/_browser.py`), a leading-underscore base excluded from discovery that owns the launch/post/scrape/close lifecycle. Sessions are captured once with `crier login substack` (headed browser, cookies saved to `~/.config/crier/browser/substack/state.json`) and reused headless. Browser platforms have no api_key, do not support update/list/delete in v1, and a failed post saves a screenshot to `~/.config/crier/browser/<name>/last-error.png`. Adding another browser platform (Hacker News, Lobsters) is a thin subclass that sets `login_url` and implements `_post(page, article, text) -> url`.
 
 Nostr (`platforms/nostr.py`) publishes secp256k1/Schnorr-signed kind-1 notes to relays over websockets via the optional `[nostr]` extra (pynostr). The signing import is deferred to publish/delete so the platform stays importable without the extra. api_key is the private key (`nsec1...` or hex), optionally `nsec1...|wss://relay.a,wss://relay.b` for custom relays (default relays otherwise). Nostr has no authoritative cross-relay listing, so `list_articles`/`get_article` return empty/None (reconcile/stats do not apply); notes are immutable (no update); delete is best-effort NIP-09 (kind 5). It is a WebSocket platform, so it does not use `retry_request`.
 

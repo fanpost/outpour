@@ -3284,3 +3284,24 @@ class TestCampaignCommand:
         )
         result = runner.invoke(cli, ["campaign", "run", "spring", "--apply"])
         assert result.exit_code == 2
+
+
+def test_login_rejects_unknown_platform():
+    from click.testing import CliRunner
+
+    from crier.cli import cli
+
+    result = CliRunner().invoke(cli, ["login", "nope-not-real"])
+    assert result.exit_code != 0
+    assert "Unknown platform" in result.output
+
+
+def test_login_rejects_non_browser_platform():
+    from click.testing import CliRunner
+
+    from crier.cli import cli
+
+    # devto is a normal API platform, not a BrowserPlatform
+    result = CliRunner().invoke(cli, ["login", "devto"])
+    assert result.exit_code != 0
+    assert "not a browser" in result.output.lower()

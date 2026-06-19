@@ -1629,6 +1629,20 @@ def doctor(json_output: bool):
     for name in PLATFORMS:
         api_key = get_api_key(name)
 
+        # Browser platforms have no api_key; health is "session captured"
+        from .platforms._browser import BrowserPlatform
+        platform_cls_early = get_platform(name)
+        if isinstance(platform_cls_early, type) and issubclass(platform_cls_early, BrowserPlatform):
+            instance = platform_cls_early("")
+            if instance._session_path().exists():
+                table.add_row(name, "[green]✓ Healthy[/green]", "Browser session captured")
+                json_platforms.append({"name": name, "status": "healthy", "details": "Browser session captured"})
+                healthy += 1
+            else:
+                table.add_row(name, "[yellow]○ No session[/yellow]", f"Run: crier login {name}")
+                json_platforms.append({"name": name, "status": "not_configured", "details": f"Run: crier login {name}"})
+            continue
+
         # Check if configured for import mode
         if is_import_mode_key(api_key):
             table.add_row(
@@ -1735,6 +1749,52 @@ def doctor(json_output: bool):
         console.print("\n[dim]No platforms configured yet.[/dim]")
         console.print("[dim]Run: crier config set <platform>.api_key YOUR_KEY[/dim]")
         console.print("[dim]Or for manual mode: crier config set <platform>.api_key manual[/dim]")
+
+
+@cli.command()
+@click.argument("platform")
+def login(platform):
+    """Capture a browser session for a browser-automation platform.
+
+    Opens a real browser window so you can log in once; the session cookies are
+    saved and reused for headless publishing. Needs: pip install 'crier[browser]'
+    and 'playwright install chromium'.
+    """
+    from .platforms._browser import BrowserPlatform
+
+    if platform not in PLATFORMS:
+        console.print(f"[red]Unknown platform: {platform}[/red]")
+        raise SystemExit(1)
+
+    platform_cls = get_platform(platform)
+    if not issubclass(platform_cls, BrowserPlatform):
+        console.print(f"[red]{platform} is not a browser-automation platform[/red]")
+        raise SystemExit(1)
+
+    instance = platform_cls("")
+    try:
+        sync_playwright = instance._import_sync_playwright()
+    except ImportError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+
+    session_path = instance._session_path()
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=False)
+        context = browser.new_context()
+        page = context.new_page()
+        if instance.login_url:
+            page.goto(instance.login_url)
+        click.echo(
+            f"Log in to {platform} in the browser window, then press Enter here."
+        )
+        click.pause(info="")
+        context.storage_state(path=str(session_path))
+        browser.close()
+
+    console.print(f"[green]Saved {platform} session to {session_path}[/green]")
 
 
 @cli.command()

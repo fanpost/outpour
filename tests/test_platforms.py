@@ -446,6 +446,67 @@ class TestBluesky:
         assert platform.list_articles() == []
 
 
+class TestBlueskyFacets:
+    """Tests for AT Protocol facet detection (links and hashtags)."""
+
+    def test_detects_url_and_hashtags(self):
+        from crier.platforms.bluesky import detect_facets
+
+        text = "Why .NET for a database? Read more at\nhttps://example.com #dotnet #database"
+        tb = text.encode("utf-8")
+        facets = detect_facets(text)
+
+        kinds = [f["features"][0]["$type"].rsplit("#", 1)[-1] for f in facets]
+        assert kinds == ["link", "tag", "tag"]
+
+        link = facets[0]
+        assert tb[link["index"]["byteStart"]:link["index"]["byteEnd"]].decode() == "https://example.com"
+        assert link["features"][0]["uri"] == "https://example.com"
+
+        tags = [f["features"][0]["tag"] for f in facets[1:]]
+        assert tags == ["dotnet", "database"]
+
+    def test_byte_offsets_account_for_multibyte(self):
+        from crier.platforms.bluesky import detect_facets
+
+        text = "🚀 ship it https://x.io/p #launch"  # leading emoji is 4 UTF-8 bytes
+        tb = text.encode("utf-8")
+        facets = detect_facets(text)
+
+        for f in facets:
+            span = tb[f["index"]["byteStart"]:f["index"]["byteEnd"]].decode()
+            feat = f["features"][0]
+            if feat["$type"].endswith("#link"):
+                assert span == feat["uri"]
+            else:
+                assert span == "#" + feat["tag"]
+
+    def test_trailing_punctuation_trimmed(self):
+        from crier.platforms.bluesky import detect_facets
+
+        facets = detect_facets("see (https://example.com/a). and #tag, end")
+        link = next(f for f in facets if f["features"][0]["$type"].endswith("#link"))
+        assert link["features"][0]["uri"] == "https://example.com/a"
+        tag = next(f for f in facets if f["features"][0]["$type"].endswith("#tag"))
+        assert tag["features"][0]["tag"] == "tag"
+
+    def test_no_facets_for_plain_text(self):
+        from crier.platforms.bluesky import detect_facets
+
+        assert detect_facets("just some plain text with no links or tags") == []
+
+    def test_facets_are_non_overlapping_and_sorted(self):
+        from crier.platforms.bluesky import detect_facets
+
+        facets = detect_facets("#a https://x.io #b https://y.io/z #c")
+        starts = [f["index"]["byteStart"] for f in facets]
+        assert starts == sorted(starts)
+        last_end = -1
+        for f in facets:
+            assert f["index"]["byteStart"] >= last_end
+            last_end = f["index"]["byteEnd"]
+
+
 class TestMastodon:
     """Tests for Mastodon platform."""
 

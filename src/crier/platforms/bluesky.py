@@ -1,9 +1,66 @@
 """Bluesky platform implementation using AT Protocol."""
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from .base import Article, ArticleStats, DeleteResult, Platform, PublishResult, ThreadPublishResult
+
+# Byte offsets for facets are computed over the UTF-8 encoding of the text,
+# because the AT Protocol indexes rich-text ranges by byte, not by character.
+_URL_RE = re.compile(rb"(https?://\S+)")
+_TAG_RE = re.compile(rb"(?:^|\s)(#[^\s#]+)")
+# Trailing punctuation the greedy patterns can over-capture; trimmed off the end.
+_URL_TRAILING = b".,;:!?'\")]}>"
+_TAG_TRAILING = b".,;:!?)]}>"
+
+
+def detect_facets(text: str) -> list[dict[str, Any]]:
+    """Detect links and hashtags in ``text`` and return AT Protocol facets.
+
+    Without facets, Bluesky renders URLs and ``#hashtags`` as plain text: the
+    URLs are not clickable and the tags are not indexed by tag feeds. Each
+    facet carries a byte range (over the UTF-8 encoding, per the protocol) and
+    a feature describing the link or tag.
+
+    Mentions are intentionally not handled here: resolving ``@handle`` to a DID
+    needs a network round trip, and the reported gap was links and hashtags.
+    """
+    text_bytes = text.encode("utf-8")
+    facets: list[dict[str, Any]] = []
+
+    for m in _URL_RE.finditer(text_bytes):
+        start, end = m.start(1), m.end(1)
+        while end > start and text_bytes[end - 1] in _URL_TRAILING:
+            end -= 1
+        uri = text_bytes[start:end].decode("utf-8")
+        facets.append({
+            "index": {"byteStart": start, "byteEnd": end},
+            "features": [{"$type": "app.bsky.richtext.facet#link", "uri": uri}],
+        })
+
+    for m in _TAG_RE.finditer(text_bytes):
+        start, end = m.start(1), m.end(1)
+        while end > start and text_bytes[end - 1] in _TAG_TRAILING:
+            end -= 1
+        tag = text_bytes[start + 1:end].decode("utf-8")  # drop the leading '#'
+        if not tag:
+            continue
+        facets.append({
+            "index": {"byteStart": start, "byteEnd": end},
+            "features": [{"$type": "app.bsky.richtext.facet#tag", "tag": tag}],
+        })
+
+    # The protocol requires non-overlapping ranges; keep the earliest of any
+    # overlap (a '#' inside a URL fragment stays part of the link).
+    facets.sort(key=lambda f: f["index"]["byteStart"])
+    deduped: list[dict[str, Any]] = []
+    last_end = -1
+    for f in facets:
+        if f["index"]["byteStart"] >= last_end:
+            deduped.append(f)
+            last_end = f["index"]["byteEnd"]
+    return deduped
 
 
 class Bluesky(Platform):
@@ -100,11 +157,15 @@ class Bluesky(Platform):
                 error="Failed to authenticate with Bluesky",
             )
 
-        record = {
+        record: dict[str, Any] = {
             "$type": "app.bsky.feed.post",
             "text": text,
             "createdAt": datetime.now(timezone.utc).isoformat(),
         }
+
+        # Annotate in-text URLs and #hashtags so they render as links/tags
+        if facets := detect_facets(text):
+            record["facets"] = facets
 
         # Add link card if canonical_url exists
         if article.canonical_url:
@@ -344,6 +405,10 @@ class Bluesky(Platform):
                 "text": post_text,
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             }
+
+            # Annotate in-text URLs and #hashtags so they render as links/tags
+            if facets := detect_facets(post_text):
+                record["facets"] = facets
 
             # Add reply reference if not the first post
             if parent_uri and root_uri:

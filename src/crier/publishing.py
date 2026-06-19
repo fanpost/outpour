@@ -73,19 +73,33 @@ def prepare_publish(
     Returns a PublishPlan. On any precondition failure the returned plan has
     .error set and .article may be None.
     """
-    mode = get_platform_mode(platform)
-    if mode != "api":
-        return PublishPlan(
-            platform=platform, mode=mode, api_key=None, article=None,
-            error=f"{platform} is in {mode} mode (not API)",
-        )
+    # Browser platforms (Substack, ...) authenticate via a captured session
+    # file, not an api_key, and report no config-based mode. Treat them as a
+    # publishable "api" path with an empty key; BrowserPlatform.publish() then
+    # checks for the session and errors helpfully if `crier login` was not run.
+    from .platforms._browser import BrowserPlatform
+    platform_cls = get_platform(platform)
+    is_browser = isinstance(platform_cls, type) and issubclass(
+        platform_cls, BrowserPlatform
+    )
 
-    api_key = get_api_key(platform)
-    if not api_key:
-        return PublishPlan(
-            platform=platform, mode=mode, api_key=None, article=None,
-            error=f"No API key configured for {platform}",
-        )
+    if is_browser:
+        mode = "api"
+        api_key = ""
+    else:
+        mode = get_platform_mode(platform)
+        if mode != "api":
+            return PublishPlan(
+                platform=platform, mode=mode, api_key=None, article=None,
+                error=f"{platform} is in {mode} mode (not API)",
+            )
+
+        api_key = get_api_key(platform)
+        if not api_key:
+            return PublishPlan(
+                platform=platform, mode=mode, api_key=None, article=None,
+                error=f"No API key configured for {platform}",
+            )
 
     try:
         article = parse_markdown_file(str(file_path))

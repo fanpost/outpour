@@ -628,7 +628,7 @@ crier config set twitter.api_key manual
 3. Use format: `https://yoursite.com:username:app_password`
 
 ### Buttondown
-1. Go to https://buttondown.email/settings/programming
+1. Go to https://buttondown.com/requests
 2. Copy your API key
 3. Use format: `api_key`
 

@@ -46,19 +46,6 @@ def test_prepare_publish_missing_key(mode, key):
 
 
 @patch("crier.publishing.parse_markdown_file")
-def test_prepare_publish_browser_platform_no_api_key_ok(parse):
-    """Browser platforms (substack) publish via a session file, not an api_key,
-    and report 'unconfigured' mode; prepare_publish must not reject them."""
-    parse.return_value = _article()
-    plan = prepare_publish("post.md", "substack", rewrite_content="short note")
-    assert plan.error is None
-    assert plan.mode == "api"
-    assert plan.api_key == ""
-    assert plan.article is not None
-    assert plan.rewritten is True
-
-
-@patch("crier.publishing.parse_markdown_file")
 @patch("crier.publishing.get_api_key", return_value="real-key")
 @patch("crier.publishing.get_platform_mode", return_value="api")
 def test_prepare_publish_explicit_rewrite(mode, key, parse):

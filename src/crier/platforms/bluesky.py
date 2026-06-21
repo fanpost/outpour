@@ -11,8 +11,30 @@ from .base import Article, ArticleStats, DeleteResult, Platform, PublishResult, 
 _URL_RE = re.compile(rb"(https?://\S+)")
 _TAG_RE = re.compile(rb"(?:^|\s)(#[^\s#]+)")
 # Trailing punctuation the greedy patterns can over-capture; trimmed off the end.
-_URL_TRAILING = b".,;:!?'\")]}>"
+# ')' is NOT in _URL_TRAILING: it is handled balance-aware in _trim_url_end so a
+# URL with a parenthesised segment (Wikipedia, MDN, Python docs) keeps it.
+_URL_TRAILING = b".,;:!?'\"]}>"
 _TAG_TRAILING = b".,;:!?)]}>"
+_CLOSE_PAREN = ord(")")
+
+
+def _trim_url_end(tb: bytes, start: int, end: int) -> int:
+    """Trim trailing punctuation a greedy URL match over-captures.
+
+    A ``)`` is stripped only when it is unbalanced within the captured slice, so
+    a paren that merely wraps the URL in prose (``(https://x/a)``) is removed
+    while one that is part of the URL (``.../Python_(programming_language)``) is
+    kept.
+    """
+    while end > start:
+        c = tb[end - 1]
+        if c == _CLOSE_PAREN:
+            if tb.count(b")", start, end) <= tb.count(b"(", start, end):
+                break
+        elif c not in _URL_TRAILING:
+            break
+        end -= 1
+    return end
 
 
 def detect_facets(text: str) -> list[dict[str, Any]]:
@@ -31,8 +53,10 @@ def detect_facets(text: str) -> list[dict[str, Any]]:
 
     for m in _URL_RE.finditer(text_bytes):
         start, end = m.start(1), m.end(1)
-        while end > start and text_bytes[end - 1] in _URL_TRAILING:
-            end -= 1
+        end = _trim_url_end(text_bytes, start, end)
+        # Skip a bare scheme left after trimming (e.g. "http://" from "http://,").
+        if end <= text_bytes.find(b"//", start) + 2:
+            continue
         uri = text_bytes[start:end].decode("utf-8")
         facets.append({
             "index": {"byteStart": start, "byteEnd": end},

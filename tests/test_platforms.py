@@ -495,6 +495,31 @@ class TestBlueskyFacets:
 
         assert detect_facets("just some plain text with no links or tags") == []
 
+    def test_balanced_paren_in_url_is_kept(self):
+        from crier.platforms.bluesky import detect_facets
+
+        url = "https://en.wikipedia.org/wiki/Python_(programming_language)"
+        facets = detect_facets(f"see {url} for more")
+        link = next(f for f in facets if f["features"][0]["$type"].endswith("#link"))
+        assert link["features"][0]["uri"] == url  # trailing ')' preserved
+
+    def test_prose_wrapping_paren_is_still_trimmed(self):
+        from crier.platforms.bluesky import detect_facets
+
+        facets = detect_facets("see (https://example.com/a) here")
+        link = next(f for f in facets if f["features"][0]["$type"].endswith("#link"))
+        assert link["features"][0]["uri"] == "https://example.com/a"  # unbalanced ')' removed
+
+    def test_bare_scheme_after_trim_is_skipped(self):
+        from crier.platforms.bluesky import detect_facets
+
+        # "http://," trims to a bare "http://" with no host -> not a valid link
+        facets = detect_facets("see http://, then #tag")
+        links = [f for f in facets if f["features"][0]["$type"].endswith("#link")]
+        assert links == []
+        tags = [f["features"][0]["tag"] for f in facets if f["features"][0]["$type"].endswith("#tag")]
+        assert tags == ["tag"]
+
     def test_facets_are_non_overlapping_and_sorted(self):
         from crier.platforms.bluesky import detect_facets
 

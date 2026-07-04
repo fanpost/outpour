@@ -848,7 +848,10 @@ class TestScheduleConcurrencySafety:
         save_schedule(load_schedule())
 
         schedule_dir = get_schedule_path().parent
-        leftovers = [p for p in schedule_dir.iterdir() if p.suffix == ".tmp"]
+        leftovers = [
+            p for p in schedule_dir.iterdir()
+            if p.name.startswith(".schedule-")
+        ]
         assert leftovers == []
         # File still valid YAML with our post
         assert len(load_schedule()["scheduled_posts"]) == 1

@@ -480,6 +480,37 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
     # Silent mode: suppress non-essential output
     silent = quiet or json_output
 
+    # Scheduled entries do not carry these options; reject the combination
+    # loudly rather than silently dropping them (the --rewrite-file
+    # regression family: an option accepted here but lost before
+    # `schedule run`). Checked first so the user is not shown pre-publish
+    # checker output for a command that cannot proceed.
+    if schedule_time:
+        unsupported = []
+        if thread:
+            unsupported.append("--thread")
+        if draft:
+            unsupported.append("--draft")
+        if temperature is not None:
+            unsupported.append("--temperature")
+        if model_override is not None:
+            unsupported.append("--model")
+        if auto_rewrite_retry is not None:
+            unsupported.append("--auto-rewrite-retry")
+        if auto_rewrite_truncate is not None:
+            unsupported.append("--auto-rewrite-truncate")
+        if unsupported:
+            msg = (
+                f"{', '.join(unsupported)} cannot be combined with"
+                " --schedule: scheduled posts do not carry"
+                " these options yet"
+            )
+            if json_output:
+                print(json_module.dumps({"success": False, "error": msg}))
+            else:
+                console.print(f"[red]Error: {msg}[/red]")
+            raise SystemExit(1)
+
     # Validate --auto-rewrite requires LLM configuration
     llm_provider = None
     if auto_rewrite:
@@ -653,30 +684,6 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
     # Handle scheduling if --schedule is provided
     if schedule_time:
         from .scheduler import parse_schedule_time, create_scheduled_post
-
-        # Scheduled entries do not carry these options yet; reject loudly
-        # rather than silently dropping them (the --rewrite-file regression
-        # family: an option accepted here but lost before `schedule run`).
-        unsupported = []
-        if thread:
-            unsupported.append("--thread")
-        if draft:
-            unsupported.append("--draft")
-        if temperature is not None:
-            unsupported.append("--temperature")
-        if model_override is not None:
-            unsupported.append("--model")
-        if unsupported:
-            msg = (
-                f"{', '.join(unsupported)} cannot be combined with"
-                " --schedule: scheduled posts do not carry"
-                " these options yet"
-            )
-            if json_output:
-                print(json_module.dumps({"success": False, "error": msg}))
-            else:
-                console.print(f"[red]Error: {msg}[/red]")
-            raise SystemExit(1)
 
         scheduled_dt = parse_schedule_time(schedule_time)
         if scheduled_dt is None:
@@ -4280,44 +4287,59 @@ def schedule_run(dry_run: bool, json_output: bool):
             # The entry asked for an LLM rewrite at publish time. Never
             # fall through silently: publishing the unrewritten body to a
             # short-form platform is exactly what the user opted out of.
-            from .config import is_llm_configured, get_llm_config
-
-            if not is_llm_configured():
-                err = (
-                    "auto_rewrite requested but no LLM is configured"
-                    " (set OPENAI_API_KEY or crier config llm set ...)"
+            # Everything here is fallible (LLM gateway, platform ctor), so
+            # any failure marks THIS post failed and the loop continues;
+            # an escaped exception would strand the remaining claimed
+            # posts in "publishing" until the stale-claim timeout.
+            try:
+                from .config import (
+                    is_llm_configured,
+                    get_llm_config,
+                    get_llm_retry_count,
+                    get_llm_truncate_fallback,
                 )
+
+                if not is_llm_configured():
+                    raise RuntimeError(
+                        "auto_rewrite requested but no LLM is configured"
+                        " (set OPENAI_API_KEY or crier config llm set ...)"
+                    )
+
+                from .llm import get_provider
+                from .rewrite import auto_rewrite_for_platform
+
+                llm_provider = get_provider(get_llm_config())
+                if llm_provider is None:
+                    raise RuntimeError(
+                        "auto_rewrite requested but the LLM provider"
+                        " could not be initialized (check llm config)"
+                    )
+
+                platform_cls = get_platform(platform_name)
+                max_len = platform_cls(api_key).max_content_length
+                if max_len and len(article.body) > max_len:
+                    rw = auto_rewrite_for_platform(
+                        article, platform_name, max_len, llm_provider,
+                        retry_count=get_llm_retry_count(),
+                        truncate_fallback=get_llm_truncate_fallback(),
+                        silent=json_output, console=console,
+                    )
+                    if not rw.success:
+                        raise RuntimeError(
+                            rw.error or "auto-rewrite failed"
+                        )
+                    article = rw.article
+                    is_rewritten = True
+                    posted_content = rw.rewrite_text
+                    rewrite_author = f"llm:{llm_provider.model}"
+            except Exception as e:
+                err = str(e)
                 update_scheduled_post(post.id, status="failed", error=err)
                 results.append({"id": post.id, "success": False, "error": err})
                 fail_count += 1
                 if not json_output:
                     console.print(f"[red]✗[/red] {post.id}: {err}")
                 continue
-
-            from .llm import get_provider
-            from .rewrite import auto_rewrite_for_platform
-
-            llm_provider = get_provider(get_llm_config())
-            platform_cls = get_platform(platform_name)
-            max_len = platform_cls(api_key).max_content_length
-            if llm_provider and max_len and len(article.body) > max_len:
-                rw = auto_rewrite_for_platform(
-                    article, platform_name, max_len, llm_provider,
-                    silent=json_output, console=console,
-                )
-                if not rw.success:
-                    update_scheduled_post(post.id, status="failed", error=rw.error)
-                    results.append(
-                        {"id": post.id, "success": False, "error": rw.error}
-                    )
-                    fail_count += 1
-                    if not json_output:
-                        console.print(f"[red]✗[/red] {post.id}: {rw.error}")
-                    continue
-                article = rw.article
-                is_rewritten = True
-                posted_content = rw.rewrite_text
-                rewrite_author = f"llm:{llm_provider.model}"
 
         # Publish
         try:

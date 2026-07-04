@@ -130,6 +130,14 @@ def save_schedule(schedule: dict[str, Any]) -> None:
     try:
         with os.fdopen(fd, "w") as f:
             yaml.safe_dump(schedule, f, default_flow_style=False, sort_keys=False)
+        # mkstemp creates 0600; preserve the previous file's mode (or a
+        # normal umask default) so other readers (e.g. a cron user) keep
+        # working after the atomic replace.
+        try:
+            mode = os.stat(schedule_file).st_mode & 0o777
+        except FileNotFoundError:
+            mode = 0o644
+        os.chmod(tmp_path, mode)
         os.replace(tmp_path, schedule_file)
     except BaseException:
         try:
@@ -273,6 +281,11 @@ def claim_due_posts(
     - pending with scheduled_time <= now
     - stuck in "publishing" with a claim older than stale_after_minutes
       (a previous runner crashed mid-publish)
+
+    Note: claimed_at is stamped for the whole batch at claim time, so a
+    single run must finish within stale_after_minutes or a concurrent
+    runner may reclaim (and double-publish) its unprocessed tail. Fine
+    for seconds-per-post workloads; raise the threshold for huge batches.
 
     Returns:
         The claimed ScheduledPost objects (status already "publishing").

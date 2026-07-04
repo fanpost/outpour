@@ -3427,3 +3427,108 @@ class TestScheduleRunAutoRewrite:
         assert len(entries) == 1
         assert entries[0]["status"] == "failed"
         assert "llm" in (entries[0]["error"] or "").lower()
+
+
+class TestScheduleRunResilience:
+    """One bad post must never abort the run loop: other claimed posts
+    would be stranded in 'publishing' until the stale-claim timeout."""
+
+    def test_exception_in_auto_rewrite_fails_that_post_only(
+        self, runner, mock_config_and_registry, monkeypatch
+    ):
+        """An unexpected exception in the auto-rewrite path marks that
+        post failed and the loop continues to the next post."""
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import patch
+        from crier.platforms.base import PublishResult
+        from crier.scheduler import create_scheduled_post, load_schedule
+
+        # Make is_llm_configured() true hermetically; get_provider is
+        # patched below so no real LLM is ever contacted.
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+
+        posts_dir = mock_config_and_registry["posts_dir"]
+        bad = posts_dir / "bad-auto.md"
+        bad.write_text(
+            "---\ntitle: Bad Auto\n"
+            "canonical_url: https://example.com/bad-auto/\n---\n" + "X" * 1000
+        )
+        good = posts_dir / "good-manual.md"
+        good.write_text(
+            "---\ntitle: Good Manual\n"
+            "canonical_url: https://example.com/good-manual/\n---\n" + "X" * 1000
+        )
+
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        bad_post = create_scheduled_post(
+            file_path=str(bad), platform="bluesky",
+            scheduled_time=past, auto_rewrite=True,
+        )
+        good_post = create_scheduled_post(
+            file_path=str(good), platform="bluesky",
+            scheduled_time=past, rewrite="fine short text",
+        )
+
+        with patch(
+            "crier.llm.get_provider",
+            side_effect=RuntimeError("gateway returned garbage"),
+        ), patch("crier.platforms.bluesky.Bluesky.publish") as mock_pub:
+            mock_pub.return_value = PublishResult(
+                success=True, platform="bluesky",
+                article_id="ok-1", url="https://bsky.app/post/ok-1",
+            )
+            result = runner.invoke(cli, ["schedule", "run"])
+
+        # Partial failure exit code: one failed, one succeeded
+        assert result.exit_code == 2, result.output
+        mock_pub.assert_called_once()
+
+        by_id = {
+            e["id"]: e for e in load_schedule()["scheduled_posts"]
+        }
+        assert by_id[bad_post.id]["status"] == "failed"
+        assert "garbage" in (by_id[bad_post.id]["error"] or "")
+        assert by_id[good_post.id]["status"] == "published"
+
+
+class TestScheduleGuardCompleteness:
+    """Every auto-rewrite tuning flag must be rejected with --schedule
+    (they are not stored on the entry; config values apply at run time)."""
+
+    def _write_post(self, posts_dir):
+        md = posts_dir / "guard2.md"
+        md.write_text(
+            "---\ntitle: Guard2\n"
+            "canonical_url: https://example.com/guard2/\n---\n" + "X" * 1000
+        )
+        return md
+
+    def test_schedule_rejects_auto_rewrite_retry(
+        self, runner, mock_config_and_registry, monkeypatch
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "bluesky",
+            "--auto-rewrite", "--auto-rewrite-retry", "3",
+            "--schedule", "2099-01-01 09:00",
+        ])
+        assert result.exit_code != 0
+        assert "--auto-rewrite-retry" in result.output
+        from crier.scheduler import load_schedule
+        assert load_schedule()["scheduled_posts"] == []
+
+    def test_schedule_rejects_auto_rewrite_truncate(
+        self, runner, mock_config_and_registry, monkeypatch
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "bluesky",
+            "--auto-rewrite", "--auto-rewrite-truncate",
+            "--schedule", "2099-01-01 09:00",
+        ])
+        assert result.exit_code != 0
+        assert "--auto-rewrite-truncate" in result.output
+        from crier.scheduler import load_schedule
+        assert load_schedule()["scheduled_posts"] == []

@@ -654,6 +654,30 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
     if schedule_time:
         from .scheduler import parse_schedule_time, create_scheduled_post
 
+        # Scheduled entries do not carry these options yet; reject loudly
+        # rather than silently dropping them (the --rewrite-file regression
+        # family: an option accepted here but lost before `schedule run`).
+        unsupported = []
+        if thread:
+            unsupported.append("--thread")
+        if draft:
+            unsupported.append("--draft")
+        if temperature is not None:
+            unsupported.append("--temperature")
+        if model_override is not None:
+            unsupported.append("--model")
+        if unsupported:
+            msg = (
+                f"{', '.join(unsupported)} cannot be combined with"
+                " --schedule: scheduled posts do not carry"
+                " these options yet"
+            )
+            if json_output:
+                print(json_module.dumps({"success": False, "error": msg}))
+            else:
+                console.print(f"[red]Error: {msg}[/red]")
+            raise SystemExit(1)
+
         scheduled_dt = parse_schedule_time(schedule_time)
         if scheduled_dt is None:
             if json_output:
@@ -703,6 +727,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 rewrite=rewrite_content,
                 auto_rewrite=auto_rewrite,
                 profile=profile_name,
+                rewrite_author=rewrite_author,
             )
             scheduled_posts.append(post)
 
@@ -4025,9 +4050,9 @@ def schedule_list(status: str | None, json_output: bool):
     table.add_column("Status")
 
     for post in posts:
-        # Format scheduled time nicely
+        # Format scheduled time nicely (with zone, matching `schedule show`)
         local_time = post.scheduled_time.astimezone()
-        time_str = local_time.strftime("%Y-%m-%d %H:%M")
+        time_str = local_time.strftime("%Y-%m-%d %H:%M %Z")
 
         # Format status
         status_display = {
@@ -4153,20 +4178,21 @@ def schedule_run(dry_run: bool, json_output: bool):
         */5 * * * * cd /path/to/project && crier schedule run
     """
     import json as json_module
-    from .scheduler import get_due_posts, update_scheduled_post
+    from .scheduler import get_due_posts, claim_due_posts, update_scheduled_post
     from .converters import parse_markdown_file
     from .platforms import get_platform, PLATFORMS
 
-    due_posts = get_due_posts()
-
-    if not due_posts:
-        if json_output:
-            print(json_module.dumps({"command": "schedule run", "processed": 0, "results": []}))
-        elif not json_output:
-            console.print("[dim]No posts due.[/dim]")
-        return
-
     if dry_run:
+        # Preview only: no claim, no mutation
+        due_posts = get_due_posts()
+        if not due_posts:
+            if json_output:
+                print(json_module.dumps(
+                    {"command": "schedule run", "processed": 0, "results": []}
+                ))
+            else:
+                console.print("[dim]No posts due.[/dim]")
+            return
         if not json_output:
             console.print("[bold]Dry Run - Due Posts[/bold]\n")
             for post in due_posts:
@@ -4182,6 +4208,17 @@ def schedule_run(dry_run: bool, json_output: bool):
                 "due": [p.to_dict() for p in due_posts],
             }
             print(json_module.dumps(output, indent=2, default=str))
+        return
+
+    # Atomically claim due posts so an overlapping runner (hourly cron +
+    # manual invocation) cannot publish the same post twice.
+    due_posts = claim_due_posts()
+
+    if not due_posts:
+        if json_output:
+            print(json_module.dumps({"command": "schedule run", "processed": 0, "results": []}))
+        elif not json_output:
+            console.print("[dim]No posts due.[/dim]")
         return
 
     results = []
@@ -4235,8 +4272,52 @@ def schedule_run(dry_run: bool, json_output: bool):
         # Use apply_rewrite so is_rewrite=True is set; short-form platforms
         # branch on that flag and would otherwise discard the body.
         is_rewritten = bool(post.rewrite)
+        posted_content = post.rewrite
+        rewrite_author = post.rewrite_author
         if post.rewrite:
             article = apply_rewrite(article, post.rewrite)
+        elif post.auto_rewrite:
+            # The entry asked for an LLM rewrite at publish time. Never
+            # fall through silently: publishing the unrewritten body to a
+            # short-form platform is exactly what the user opted out of.
+            from .config import is_llm_configured, get_llm_config
+
+            if not is_llm_configured():
+                err = (
+                    "auto_rewrite requested but no LLM is configured"
+                    " (set OPENAI_API_KEY or crier config llm set ...)"
+                )
+                update_scheduled_post(post.id, status="failed", error=err)
+                results.append({"id": post.id, "success": False, "error": err})
+                fail_count += 1
+                if not json_output:
+                    console.print(f"[red]✗[/red] {post.id}: {err}")
+                continue
+
+            from .llm import get_provider
+            from .rewrite import auto_rewrite_for_platform
+
+            llm_provider = get_provider(get_llm_config())
+            platform_cls = get_platform(platform_name)
+            max_len = platform_cls(api_key).max_content_length
+            if llm_provider and max_len and len(article.body) > max_len:
+                rw = auto_rewrite_for_platform(
+                    article, platform_name, max_len, llm_provider,
+                    silent=json_output, console=console,
+                )
+                if not rw.success:
+                    update_scheduled_post(post.id, status="failed", error=rw.error)
+                    results.append(
+                        {"id": post.id, "success": False, "error": rw.error}
+                    )
+                    fail_count += 1
+                    if not json_output:
+                        console.print(f"[red]✗[/red] {post.id}: {rw.error}")
+                    continue
+                article = rw.article
+                is_rewritten = True
+                posted_content = rw.rewrite_text
+                rewrite_author = f"llm:{llm_provider.model}"
 
         # Publish
         try:
@@ -4257,7 +4338,8 @@ def schedule_run(dry_run: bool, json_output: bool):
                         title=article.title,
                         source_file=str(file_path),
                         rewritten=is_rewritten,
-                        posted_content=post.rewrite if is_rewritten else None,
+                        rewrite_author=rewrite_author if is_rewritten else None,
+                        posted_content=posted_content if is_rewritten else None,
                     )
 
                 results.append({

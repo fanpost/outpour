@@ -783,3 +783,106 @@ class TestParseScheduleTimeLocalSemantics:
         assert result is not None
         expected = datetime(2026, 7, 5, 12, 0).astimezone(timezone.utc)
         assert result == expected
+
+
+class TestScheduleConcurrencySafety:
+    """Claim-based dispatch so overlapping schedule runs cannot double-publish."""
+
+    def test_claim_due_posts_marks_publishing_and_excludes_second_claim(
+        self, tmp_schedule
+    ):
+        """First claim wins; a concurrent second claim gets nothing."""
+        from crier.scheduler import claim_due_posts
+
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        create_scheduled_post("due.md", "devto", past)
+
+        first = claim_due_posts()
+        assert len(first) == 1
+        assert first[0].status == "publishing"
+
+        second = claim_due_posts()
+        assert second == []
+
+    def test_claim_skips_future_and_terminal_posts(self, tmp_schedule):
+        """Only pending+due posts are claimable."""
+        from crier.scheduler import claim_due_posts, update_scheduled_post
+
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        create_scheduled_post("future.md", "devto", future)
+        done = create_scheduled_post("done.md", "devto", past)
+        update_scheduled_post(done.id, status="published")
+
+        assert claim_due_posts() == []
+
+    def test_claim_reclaims_stale_publishing_posts(self, tmp_schedule):
+        """A crashed runner's in-flight claim is reclaimed after the timeout."""
+        from crier.scheduler import claim_due_posts, load_schedule, save_schedule
+
+        past = datetime.now(timezone.utc) - timedelta(hours=2)
+        create_scheduled_post("stale.md", "devto", past)
+
+        # First runner claims, then "crashes" (never updates status)
+        assert len(claim_due_posts()) == 1
+
+        # Fresh claim right away: still in-flight, not stale yet
+        assert claim_due_posts() == []
+
+        # Age the claim beyond the stale threshold
+        schedule = load_schedule()
+        old = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
+        schedule["scheduled_posts"][0]["claimed_at"] = old
+        save_schedule(schedule)
+
+        reclaimed = claim_due_posts()
+        assert len(reclaimed) == 1
+        assert reclaimed[0].file_path == "stale.md"
+
+    def test_save_schedule_is_atomic_no_temp_leftover(self, tmp_schedule):
+        """Saves go through an atomic replace and leave no temp files."""
+        from crier.scheduler import get_schedule_path, load_schedule, save_schedule
+
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        create_scheduled_post("a.md", "devto", past)
+        save_schedule(load_schedule())
+
+        schedule_dir = get_schedule_path().parent
+        leftovers = [p for p in schedule_dir.iterdir() if p.suffix == ".tmp"]
+        assert leftovers == []
+        # File still valid YAML with our post
+        assert len(load_schedule()["scheduled_posts"]) == 1
+
+
+class TestScheduledPostRobustness:
+    """from_dict must tolerate hand-edited schedule.yaml."""
+
+    def test_from_dict_coerces_naive_times_to_utc(self):
+        """Naive timestamps (hand-edited YAML) are read as UTC, not crash."""
+        from crier.scheduler import ScheduledPost
+
+        post = ScheduledPost.from_dict({
+            "id": "abc12345",
+            "file_path": "x.md",
+            "platform": "devto",
+            "scheduled_time": "2026-07-05 12:00:00",
+            "created_at": "2026-07-01 08:00:00",
+            "status": "pending",
+        })
+        assert post.scheduled_time.tzinfo is not None
+        assert post.scheduled_time == datetime(2026, 7, 5, 12, 0, tzinfo=timezone.utc)
+        # And comparisons against aware now() no longer raise
+        assert (post.scheduled_time <= datetime.now(timezone.utc)) in (True, False)
+
+    def test_rewrite_author_round_trips(self, tmp_schedule):
+        """rewrite_author survives create -> store -> load."""
+        from crier.scheduler import get_due_posts
+
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        create_scheduled_post(
+            "authored.md", "bluesky", past,
+            rewrite="short text", rewrite_author="claude-code",
+        )
+        due = get_due_posts()
+        assert len(due) == 1
+        assert due[0].rewrite_author == "claude-code"

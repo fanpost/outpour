@@ -480,6 +480,37 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
     # Silent mode: suppress non-essential output
     silent = quiet or json_output
 
+    # Scheduled entries do not carry these options; reject the combination
+    # loudly rather than silently dropping them (the --rewrite-file
+    # regression family: an option accepted here but lost before
+    # `schedule run`). Checked first so the user is not shown pre-publish
+    # checker output for a command that cannot proceed.
+    if schedule_time:
+        unsupported = []
+        if thread:
+            unsupported.append("--thread")
+        if draft:
+            unsupported.append("--draft")
+        if temperature is not None:
+            unsupported.append("--temperature")
+        if model_override is not None:
+            unsupported.append("--model")
+        if auto_rewrite_retry is not None:
+            unsupported.append("--auto-rewrite-retry")
+        if auto_rewrite_truncate is not None:
+            unsupported.append("--auto-rewrite-truncate")
+        if unsupported:
+            msg = (
+                f"{', '.join(unsupported)} cannot be combined with"
+                " --schedule: scheduled posts do not carry"
+                " these options yet"
+            )
+            if json_output:
+                print(json_module.dumps({"success": False, "error": msg}))
+            else:
+                console.print(f"[red]Error: {msg}[/red]")
+            raise SystemExit(1)
+
     # Validate --auto-rewrite requires LLM configuration
     llm_provider = None
     if auto_rewrite:
@@ -643,6 +674,13 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                     parts.append(f"{info_count} info")
                 console.print(f"[dim]Pre-publish check: {', '.join(parts)}. Continuing...[/dim]")
 
+    # Materialize --rewrite-file into rewrite_content before any branch
+    # consumes it. The scheduling branch below returns early, so reading
+    # the file later would silently drop the rewrite from scheduled posts.
+    if rewrite_file:
+        with open(rewrite_file) as f:
+            rewrite_content = f.read().strip()
+
     # Handle scheduling if --schedule is provided
     if schedule_time:
         from .scheduler import parse_schedule_time, create_scheduled_post
@@ -663,6 +701,29 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 console.print("  --schedule 'in 2 hours'")
             raise SystemExit(1)
 
+        # Preview without persisting when --dry-run is set
+        if dry_run:
+            local_time = scheduled_dt.astimezone()
+            time_str = local_time.strftime('%Y-%m-%d %H:%M %Z')
+            if json_output:
+                output = {
+                    "command": "publish",
+                    "scheduled": True,
+                    "dry_run": True,
+                    "file": file,
+                    "platforms": list(platforms),
+                    "scheduled_time": scheduled_dt.isoformat(),
+                    "rewrite": rewrite_content,
+                }
+                print(json_module.dumps(output, indent=2, default=str))
+            else:
+                console.print(f"[bold]Dry Run[/bold] - would schedule for {time_str}")
+                for platform_name in platforms:
+                    console.print(f"  • {platform_name}")
+                if rewrite_content:
+                    console.print(f"  [dim]rewrite: {len(rewrite_content)} chars[/dim]")
+            return
+
         # Create scheduled posts for each platform
         scheduled_posts = []
         for platform_name in platforms:
@@ -673,6 +734,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 rewrite=rewrite_content,
                 auto_rewrite=auto_rewrite,
                 profile=profile_name,
+                rewrite_author=rewrite_author,
             )
             scheduled_posts.append(post)
 
@@ -731,12 +793,10 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
     if draft:
         article.published = False
 
-    # Handle rewrite content
+    # Handle rewrite content (--rewrite-file was materialized into
+    # rewrite_content before the scheduling branch above)
     is_rewritten = False
     posted_content = None
-    if rewrite_file:
-        with open(rewrite_file) as f:
-            rewrite_content = f.read().strip()
     if rewrite_content:
         is_rewritten = True
         posted_content = rewrite_content
@@ -3997,9 +4057,9 @@ def schedule_list(status: str | None, json_output: bool):
     table.add_column("Status")
 
     for post in posts:
-        # Format scheduled time nicely
+        # Format scheduled time nicely (with zone, matching `schedule show`)
         local_time = post.scheduled_time.astimezone()
-        time_str = local_time.strftime("%Y-%m-%d %H:%M")
+        time_str = local_time.strftime("%Y-%m-%d %H:%M %Z")
 
         # Format status
         status_display = {
@@ -4125,20 +4185,21 @@ def schedule_run(dry_run: bool, json_output: bool):
         */5 * * * * cd /path/to/project && crier schedule run
     """
     import json as json_module
-    from .scheduler import get_due_posts, update_scheduled_post
+    from .scheduler import get_due_posts, claim_due_posts, update_scheduled_post
     from .converters import parse_markdown_file
     from .platforms import get_platform, PLATFORMS
 
-    due_posts = get_due_posts()
-
-    if not due_posts:
-        if json_output:
-            print(json_module.dumps({"command": "schedule run", "processed": 0, "results": []}))
-        elif not json_output:
-            console.print("[dim]No posts due.[/dim]")
-        return
-
     if dry_run:
+        # Preview only: no claim, no mutation
+        due_posts = get_due_posts()
+        if not due_posts:
+            if json_output:
+                print(json_module.dumps(
+                    {"command": "schedule run", "processed": 0, "results": []}
+                ))
+            else:
+                console.print("[dim]No posts due.[/dim]")
+            return
         if not json_output:
             console.print("[bold]Dry Run - Due Posts[/bold]\n")
             for post in due_posts:
@@ -4154,6 +4215,17 @@ def schedule_run(dry_run: bool, json_output: bool):
                 "due": [p.to_dict() for p in due_posts],
             }
             print(json_module.dumps(output, indent=2, default=str))
+        return
+
+    # Atomically claim due posts so an overlapping runner (hourly cron +
+    # manual invocation) cannot publish the same post twice.
+    due_posts = claim_due_posts()
+
+    if not due_posts:
+        if json_output:
+            print(json_module.dumps({"command": "schedule run", "processed": 0, "results": []}))
+        elif not json_output:
+            console.print("[dim]No posts due.[/dim]")
         return
 
     results = []
@@ -4207,8 +4279,67 @@ def schedule_run(dry_run: bool, json_output: bool):
         # Use apply_rewrite so is_rewrite=True is set; short-form platforms
         # branch on that flag and would otherwise discard the body.
         is_rewritten = bool(post.rewrite)
+        posted_content = post.rewrite
+        rewrite_author = post.rewrite_author
         if post.rewrite:
             article = apply_rewrite(article, post.rewrite)
+        elif post.auto_rewrite:
+            # The entry asked for an LLM rewrite at publish time. Never
+            # fall through silently: publishing the unrewritten body to a
+            # short-form platform is exactly what the user opted out of.
+            # Everything here is fallible (LLM gateway, platform ctor), so
+            # any failure marks THIS post failed and the loop continues;
+            # an escaped exception would strand the remaining claimed
+            # posts in "publishing" until the stale-claim timeout.
+            try:
+                from .config import (
+                    is_llm_configured,
+                    get_llm_config,
+                    get_llm_retry_count,
+                    get_llm_truncate_fallback,
+                )
+
+                if not is_llm_configured():
+                    raise RuntimeError(
+                        "auto_rewrite requested but no LLM is configured"
+                        " (set OPENAI_API_KEY or crier config llm set ...)"
+                    )
+
+                from .llm import get_provider
+                from .rewrite import auto_rewrite_for_platform
+
+                llm_provider = get_provider(get_llm_config())
+                if llm_provider is None:
+                    raise RuntimeError(
+                        "auto_rewrite requested but the LLM provider"
+                        " could not be initialized (check llm config)"
+                    )
+
+                platform_cls = get_platform(platform_name)
+                max_len = platform_cls(api_key).max_content_length
+                if max_len and len(article.body) > max_len:
+                    rw = auto_rewrite_for_platform(
+                        article, platform_name, max_len, llm_provider,
+                        retry_count=get_llm_retry_count(),
+                        truncate_fallback=get_llm_truncate_fallback(),
+                        silent=json_output, console=console,
+                    )
+                    if not rw.success:
+                        raise RuntimeError(
+                            rw.error or "auto-rewrite failed"
+                        )
+                    article = rw.article
+                    is_rewritten = True
+                    posted_content = rw.rewrite_text
+                    rewrite_author = f"llm:{llm_provider.model}"
+            except Exception as e:
+                err = str(e)
+                update_scheduled_post(post.id, status="failed", error=err)
+                results.append({"id": post.id, "success": False, "error": err})
+                fail_count += 1
+                if not json_output:
+                    console.print(f"[red]✗[/red] {post.id}: {err}")
+                continue
 
         # Publish
         try:
@@ -4229,7 +4360,8 @@ def schedule_run(dry_run: bool, json_output: bool):
                         title=article.title,
                         source_file=str(file_path),
                         rewritten=is_rewritten,
-                        posted_content=post.rewrite if is_rewritten else None,
+                        rewrite_author=rewrite_author if is_rewritten else None,
+                        posted_content=posted_content if is_rewritten else None,
                     )
 
                 results.append({

@@ -3284,3 +3284,251 @@ class TestCampaignCommand:
         )
         result = runner.invoke(cli, ["campaign", "run", "spring", "--apply"])
         assert result.exit_code == 2
+
+
+class TestPublishScheduleFlags:
+    """Regressions in the publish --schedule branch.
+
+    The schedule branch returns before the immediate-publish path, so any
+    option materialized later (like --rewrite-file) was silently dropped,
+    and --dry-run was ignored entirely (entries were really created).
+    """
+
+    def _write_post(self, posts_dir):
+        md = posts_dir / "sched-flags.md"
+        md.write_text(
+            "---\ntitle: Sched Flags\n"
+            "canonical_url: https://example.com/sched-flags/\n---\n"
+            + "X" * 1000
+        )
+        return md
+
+    def test_rewrite_file_persists_into_scheduled_entry(
+        self, runner, mock_config_and_registry, tmp_path
+    ):
+        """--rewrite-file with --schedule must store the rewrite text."""
+        from crier.scheduler import load_schedule
+
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+        rewrite_text = "Hand-written short-form hook. https://example.com/sched-flags/"
+        rw = tmp_path / "rw.txt"
+        rw.write_text(rewrite_text + "\n")
+
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "bluesky",
+            "--rewrite-file", str(rw),
+            "--schedule", "2099-01-01 09:00",
+        ])
+        assert result.exit_code == 0, result.output
+
+        pending = [
+            p for p in load_schedule()["scheduled_posts"]
+            if p["status"] == "pending"
+        ]
+        assert len(pending) == 1
+        assert pending[0]["rewrite"] == rewrite_text
+
+    def test_dry_run_with_schedule_creates_no_entry(
+        self, runner, mock_config_and_registry
+    ):
+        """--dry-run with --schedule must not persist scheduled posts."""
+        from crier.scheduler import load_schedule
+
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "bluesky",
+            "--schedule", "2099-01-01 09:00",
+            "--dry-run",
+        ])
+        assert result.exit_code == 0, result.output
+        assert load_schedule()["scheduled_posts"] == []
+
+
+class TestScheduleOptionGuards:
+    """Options the scheduler cannot yet carry must be rejected loudly,
+    not silently dropped (regression family: --rewrite-file was silently
+    dropped; --thread/--draft still would be)."""
+
+    def _write_post(self, posts_dir):
+        md = posts_dir / "guards.md"
+        md.write_text(
+            "---\ntitle: Guards\n"
+            "canonical_url: https://example.com/guards/\n---\n"
+            + "X" * 1000
+        )
+        return md
+
+    def test_schedule_rejects_thread(self, runner, mock_config_and_registry):
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "bluesky",
+            "--thread", "--schedule", "2099-01-01 09:00",
+        ])
+        assert result.exit_code != 0
+        assert "--thread" in result.output
+        from crier.scheduler import load_schedule
+        assert load_schedule()["scheduled_posts"] == []
+
+    def test_schedule_rejects_draft(self, runner, mock_config_and_registry):
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "devto",
+            "--draft", "--schedule", "2099-01-01 09:00",
+        ])
+        assert result.exit_code != 0
+        assert "--draft" in result.output
+        from crier.scheduler import load_schedule
+        assert load_schedule()["scheduled_posts"] == []
+
+
+class TestScheduleRunAutoRewrite:
+    """schedule run must honor auto_rewrite, or fail the post clearly.
+
+    Regression: auto_rewrite was stored on the entry but silently ignored
+    at run time, so short-form platforms got a mechanical title+URL
+    summary instead of the requested LLM rewrite.
+    """
+
+    def test_auto_rewrite_without_llm_fails_post_not_silent(
+        self, runner, mock_config_and_registry, monkeypatch
+    ):
+        """No LLM configured: the post must fail with a clear error,
+        never publish the unrewritten body."""
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import patch
+        from crier.scheduler import create_scheduled_post, load_schedule
+
+        # Hermetic: the host may have a real key in the environment, which
+        # would make is_llm_configured() true and trigger a live LLM call.
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+        posts_dir = mock_config_and_registry["posts_dir"]
+        md = posts_dir / "auto-rw.md"
+        md.write_text(
+            "---\ntitle: Auto RW\n"
+            "canonical_url: https://example.com/auto-rw/\n---\n"
+            + "X" * 1000
+        )
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        create_scheduled_post(
+            file_path=str(md), platform="bluesky",
+            scheduled_time=past, auto_rewrite=True,
+        )
+
+        with patch("crier.platforms.bluesky.Bluesky.publish") as mock_pub:
+            result = runner.invoke(cli, ["schedule", "run"])
+
+        # schedule run exits 1 when all due posts fail (cron observability)
+        assert result.exit_code == 1
+        mock_pub.assert_not_called()
+        entries = load_schedule()["scheduled_posts"]
+        assert len(entries) == 1
+        assert entries[0]["status"] == "failed"
+        assert "llm" in (entries[0]["error"] or "").lower()
+
+
+class TestScheduleRunResilience:
+    """One bad post must never abort the run loop: other claimed posts
+    would be stranded in 'publishing' until the stale-claim timeout."""
+
+    def test_exception_in_auto_rewrite_fails_that_post_only(
+        self, runner, mock_config_and_registry, monkeypatch
+    ):
+        """An unexpected exception in the auto-rewrite path marks that
+        post failed and the loop continues to the next post."""
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import patch
+        from crier.platforms.base import PublishResult
+        from crier.scheduler import create_scheduled_post, load_schedule
+
+        # Make is_llm_configured() true hermetically; get_provider is
+        # patched below so no real LLM is ever contacted.
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+
+        posts_dir = mock_config_and_registry["posts_dir"]
+        bad = posts_dir / "bad-auto.md"
+        bad.write_text(
+            "---\ntitle: Bad Auto\n"
+            "canonical_url: https://example.com/bad-auto/\n---\n" + "X" * 1000
+        )
+        good = posts_dir / "good-manual.md"
+        good.write_text(
+            "---\ntitle: Good Manual\n"
+            "canonical_url: https://example.com/good-manual/\n---\n" + "X" * 1000
+        )
+
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        bad_post = create_scheduled_post(
+            file_path=str(bad), platform="bluesky",
+            scheduled_time=past, auto_rewrite=True,
+        )
+        good_post = create_scheduled_post(
+            file_path=str(good), platform="bluesky",
+            scheduled_time=past, rewrite="fine short text",
+        )
+
+        with patch(
+            "crier.llm.get_provider",
+            side_effect=RuntimeError("gateway returned garbage"),
+        ), patch("crier.platforms.bluesky.Bluesky.publish") as mock_pub:
+            mock_pub.return_value = PublishResult(
+                success=True, platform="bluesky",
+                article_id="ok-1", url="https://bsky.app/post/ok-1",
+            )
+            result = runner.invoke(cli, ["schedule", "run"])
+
+        # Partial failure exit code: one failed, one succeeded
+        assert result.exit_code == 2, result.output
+        mock_pub.assert_called_once()
+
+        by_id = {
+            e["id"]: e for e in load_schedule()["scheduled_posts"]
+        }
+        assert by_id[bad_post.id]["status"] == "failed"
+        assert "garbage" in (by_id[bad_post.id]["error"] or "")
+        assert by_id[good_post.id]["status"] == "published"
+
+
+class TestScheduleGuardCompleteness:
+    """Every auto-rewrite tuning flag must be rejected with --schedule
+    (they are not stored on the entry; config values apply at run time)."""
+
+    def _write_post(self, posts_dir):
+        md = posts_dir / "guard2.md"
+        md.write_text(
+            "---\ntitle: Guard2\n"
+            "canonical_url: https://example.com/guard2/\n---\n" + "X" * 1000
+        )
+        return md
+
+    def test_schedule_rejects_auto_rewrite_retry(
+        self, runner, mock_config_and_registry, monkeypatch
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "bluesky",
+            "--auto-rewrite", "--auto-rewrite-retry", "3",
+            "--schedule", "2099-01-01 09:00",
+        ])
+        assert result.exit_code != 0
+        assert "--auto-rewrite-retry" in result.output
+        from crier.scheduler import load_schedule
+        assert load_schedule()["scheduled_posts"] == []
+
+    def test_schedule_rejects_auto_rewrite_truncate(
+        self, runner, mock_config_and_registry, monkeypatch
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "bluesky",
+            "--auto-rewrite", "--auto-rewrite-truncate",
+            "--schedule", "2099-01-01 09:00",
+        ])
+        assert result.exit_code != 0
+        assert "--auto-rewrite-truncate" in result.output
+        from crier.scheduler import load_schedule
+        assert load_schedule()["scheduled_posts"] == []

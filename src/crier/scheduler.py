@@ -7,12 +7,30 @@ This module provides scheduling functionality for delayed publishing:
 - Cron-friendly run command for processing due schedules
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+import os
+import tempfile
 import uuid
 import yaml
+
+# A runner crash can leave posts stuck in "publishing"; claims older than
+# this are considered abandoned and become claimable again.
+STALE_CLAIM_MINUTES = 30
+
+
+def _ensure_aware(dt: datetime) -> datetime:
+    """Coerce a naive datetime to UTC (stored times are always UTC).
+
+    schedule.yaml is human-editable; a hand-edited naive timestamp must
+    not crash every aware comparison in the scheduler.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 @dataclass
@@ -24,11 +42,13 @@ class ScheduledPost:
     platform: str
     scheduled_time: datetime
     created_at: datetime
-    status: str  # pending, published, failed, cancelled
+    status: str  # pending, publishing, published, failed, cancelled
     error: str | None = None
     rewrite: str | None = None
     auto_rewrite: bool = False
     profile: str | None = None  # Profile to use instead of single platform
+    rewrite_author: str | None = None  # Who authored the rewrite text
+    claimed_at: datetime | None = None  # When a runner claimed this post
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for YAML serialization."""
@@ -43,22 +63,34 @@ class ScheduledPost:
             "rewrite": self.rewrite,
             "auto_rewrite": self.auto_rewrite,
             "profile": self.profile,
+            "rewrite_author": self.rewrite_author,
+            "claimed_at": self.claimed_at.isoformat() if self.claimed_at else None,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ScheduledPost":
         """Create from dictionary."""
+        claimed_at = data.get("claimed_at")
         return cls(
             id=data["id"],
             file_path=data["file_path"],
             platform=data["platform"],
-            scheduled_time=datetime.fromisoformat(data["scheduled_time"]),
-            created_at=datetime.fromisoformat(data["created_at"]),
+            scheduled_time=_ensure_aware(
+                datetime.fromisoformat(data["scheduled_time"])
+            ),
+            created_at=_ensure_aware(
+                datetime.fromisoformat(data["created_at"])
+            ),
             status=data["status"],
             error=data.get("error"),
             rewrite=data.get("rewrite"),
             auto_rewrite=data.get("auto_rewrite", False),
             profile=data.get("profile"),
+            rewrite_author=data.get("rewrite_author"),
+            claimed_at=(
+                _ensure_aware(datetime.fromisoformat(claimed_at))
+                if claimed_at else None
+            ),
         )
 
 
@@ -84,12 +116,60 @@ def load_schedule() -> dict[str, Any]:
 
 
 def save_schedule(schedule: dict[str, Any]) -> None:
-    """Save the schedule to disk."""
+    """Save the schedule to disk atomically.
+
+    Writes to a temp file in the same directory and os.replace()s it into
+    place, so a crash mid-write can never truncate schedule.yaml.
+    """
     schedule_file = get_schedule_path()
     schedule_file.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(schedule_file, "w") as f:
-        yaml.safe_dump(schedule, f, default_flow_style=False, sort_keys=False)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=schedule_file.parent, prefix=".schedule-", suffix=".yaml"
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.safe_dump(schedule, f, default_flow_style=False, sort_keys=False)
+        # mkstemp creates 0600; preserve the previous file's mode (or a
+        # normal umask default) so other readers (e.g. a cron user) keep
+        # working after the atomic replace.
+        try:
+            mode = os.stat(schedule_file).st_mode & 0o777
+        except FileNotFoundError:
+            mode = 0o644
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, schedule_file)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+@contextmanager
+def _schedule_lock():
+    """Serialize read-modify-write cycles on schedule.yaml.
+
+    An hourly cron runner and a manual `crier publish --schedule` can
+    overlap; without a lock one write clobbers the other. Uses flock on
+    POSIX; degrades to no locking where fcntl is unavailable (Windows),
+    matching the previous behavior there.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+
+    lock_path = get_schedule_path().with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def create_scheduled_post(
@@ -99,6 +179,7 @@ def create_scheduled_post(
     rewrite: str | None = None,
     auto_rewrite: bool = False,
     profile: str | None = None,
+    rewrite_author: str | None = None,
 ) -> ScheduledPost:
     """Create and save a new scheduled post.
 
@@ -109,6 +190,7 @@ def create_scheduled_post(
         rewrite: Optional custom rewrite content
         auto_rewrite: Whether to use LLM auto-rewrite
         profile: Optional profile name to use instead of platform
+        rewrite_author: Label for who wrote the rewrite content
 
     Returns:
         The created ScheduledPost
@@ -127,11 +209,13 @@ def create_scheduled_post(
         rewrite=rewrite,
         auto_rewrite=auto_rewrite,
         profile=profile,
+        rewrite_author=rewrite_author,
     )
 
-    schedule = load_schedule()
-    schedule["scheduled_posts"].append(post.to_dict())
-    save_schedule(schedule)
+    with _schedule_lock():
+        schedule = load_schedule()
+        schedule["scheduled_posts"].append(post.to_dict())
+        save_schedule(schedule)
 
     return post
 
@@ -186,6 +270,58 @@ def get_due_posts() -> list[ScheduledPost]:
     return [p for p in posts if p.scheduled_time <= now]
 
 
+def claim_due_posts(
+    stale_after_minutes: int = STALE_CLAIM_MINUTES,
+) -> list[ScheduledPost]:
+    """Atomically claim all due posts for publishing.
+
+    Under the schedule lock, marks every claimable post "publishing" and
+    stamps claimed_at, so an overlapping runner (cron + manual) claims
+    nothing and cannot double-publish. Claimable posts are:
+    - pending with scheduled_time <= now
+    - stuck in "publishing" with a claim older than stale_after_minutes
+      (a previous runner crashed mid-publish)
+
+    Note: claimed_at is stamped for the whole batch at claim time, so a
+    single run must finish within stale_after_minutes or a concurrent
+    runner may reclaim (and double-publish) its unprocessed tail. Fine
+    for seconds-per-post workloads; raise the threshold for huge batches.
+
+    Returns:
+        The claimed ScheduledPost objects (status already "publishing").
+    """
+    now = datetime.now(timezone.utc)
+    claimed: list[ScheduledPost] = []
+
+    with _schedule_lock():
+        schedule = load_schedule()
+
+        for post_data in schedule.get("scheduled_posts", []):
+            status = post_data.get("status")
+            if status == "pending":
+                due = _ensure_aware(
+                    datetime.fromisoformat(post_data["scheduled_time"])
+                ) <= now
+            elif status == "publishing":
+                claimed_at = post_data.get("claimed_at")
+                due = claimed_at is None or (
+                    now - _ensure_aware(datetime.fromisoformat(claimed_at))
+                    > timedelta(minutes=stale_after_minutes)
+                )
+            else:
+                due = False
+
+            if due:
+                post_data["status"] = "publishing"
+                post_data["claimed_at"] = now.isoformat()
+                claimed.append(ScheduledPost.from_dict(post_data))
+
+        if claimed:
+            save_schedule(schedule)
+
+    return claimed
+
+
 def update_scheduled_post(
     post_id: str,
     status: str | None = None,
@@ -201,16 +337,17 @@ def update_scheduled_post(
     Returns:
         True if updated, False if not found
     """
-    schedule = load_schedule()
+    with _schedule_lock():
+        schedule = load_schedule()
 
-    for post_data in schedule.get("scheduled_posts", []):
-        if post_data["id"] == post_id or post_data["id"].startswith(post_id):
-            if status:
-                post_data["status"] = status
-            if error is not None:
-                post_data["error"] = error
-            save_schedule(schedule)
-            return True
+        for post_data in schedule.get("scheduled_posts", []):
+            if post_data["id"] == post_id or post_data["id"].startswith(post_id):
+                if status:
+                    post_data["status"] = status
+                if error is not None:
+                    post_data["error"] = error
+                save_schedule(schedule)
+                return True
 
     return False
 
@@ -246,17 +383,18 @@ def delete_scheduled_post(post_id: str) -> bool:
     Returns:
         True if deleted, False if not found
     """
-    schedule = load_schedule()
-    original_count = len(schedule.get("scheduled_posts", []))
+    with _schedule_lock():
+        schedule = load_schedule()
+        original_count = len(schedule.get("scheduled_posts", []))
 
-    schedule["scheduled_posts"] = [
-        p for p in schedule.get("scheduled_posts", [])
-        if not (p["id"] == post_id or p["id"].startswith(post_id))
-    ]
+        schedule["scheduled_posts"] = [
+            p for p in schedule.get("scheduled_posts", [])
+            if not (p["id"] == post_id or p["id"].startswith(post_id))
+        ]
 
-    if len(schedule["scheduled_posts"]) < original_count:
-        save_schedule(schedule)
-        return True
+        if len(schedule["scheduled_posts"]) < original_count:
+            save_schedule(schedule)
+            return True
 
     return False
 
@@ -269,7 +407,9 @@ def parse_schedule_time(time_str: str) -> datetime | None:
     - Natural language: "tomorrow 9am", "in 2 hours", "next monday 10am"
 
     The dateparser library is used for natural language parsing.
-    All times are converted to UTC.
+    Naive input (no explicit timezone) is interpreted as LOCAL wall-clock
+    time; explicit offsets in the input are honored. The result is always
+    converted to UTC for storage.
 
     Args:
         time_str: Time string to parse
@@ -283,11 +423,9 @@ def parse_schedule_time(time_str: str) -> datetime | None:
         # Fall back to basic ISO parsing if dateparser not installed
         try:
             dt = datetime.fromisoformat(time_str)
-            if dt.tzinfo is None:
-                # Assume local time, convert to UTC
-                from datetime import timezone as tz
-                dt = dt.replace(tzinfo=tz.utc)
-            return dt
+            # Naive input means local time; astimezone() on a naive
+            # datetime attaches the local zone before converting.
+            return dt.astimezone(timezone.utc)
         except ValueError:
             return None
 
@@ -295,7 +433,11 @@ def parse_schedule_time(time_str: str) -> datetime | None:
     settings = {
         "PREFER_DATES_FROM": "future",
         "RETURN_AS_TIMEZONE_AWARE": True,
-        "TIMEZONE": "UTC",
+        # Naive input is the user's local wall-clock time; convert to
+        # UTC for storage. TIMEZONE only applies when the input itself
+        # carries no timezone, so explicit offsets are still honored.
+        "TIMEZONE": "local",
+        "TO_TIMEZONE": "UTC",
     }
 
     parsed = dateparser.parse(time_str, settings=settings)
@@ -319,18 +461,22 @@ def cleanup_old_posts(days: int = 30) -> int:
     Returns:
         Number of posts removed
     """
-    schedule = load_schedule()
     cutoff = datetime.now(timezone.utc).timestamp() - (days * 24 * 60 * 60)
-    original_count = len(schedule.get("scheduled_posts", []))
 
-    schedule["scheduled_posts"] = [
-        p for p in schedule.get("scheduled_posts", [])
-        if p["status"] == "pending" or
-        datetime.fromisoformat(p["scheduled_time"]).timestamp() > cutoff
-    ]
+    with _schedule_lock():
+        schedule = load_schedule()
+        original_count = len(schedule.get("scheduled_posts", []))
 
-    removed = original_count - len(schedule["scheduled_posts"])
-    if removed > 0:
-        save_schedule(schedule)
+        schedule["scheduled_posts"] = [
+            p for p in schedule.get("scheduled_posts", [])
+            if p["status"] == "pending" or
+            _ensure_aware(
+                datetime.fromisoformat(p["scheduled_time"])
+            ).timestamp() > cutoff
+        ]
+
+        removed = original_count - len(schedule["scheduled_posts"])
+        if removed > 0:
+            save_schedule(schedule)
 
     return removed

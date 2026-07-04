@@ -3284,3 +3284,62 @@ class TestCampaignCommand:
         )
         result = runner.invoke(cli, ["campaign", "run", "spring", "--apply"])
         assert result.exit_code == 2
+
+
+class TestPublishScheduleFlags:
+    """Regressions in the publish --schedule branch.
+
+    The schedule branch returns before the immediate-publish path, so any
+    option materialized later (like --rewrite-file) was silently dropped,
+    and --dry-run was ignored entirely (entries were really created).
+    """
+
+    def _write_post(self, posts_dir):
+        md = posts_dir / "sched-flags.md"
+        md.write_text(
+            "---\ntitle: Sched Flags\n"
+            "canonical_url: https://example.com/sched-flags/\n---\n"
+            + "X" * 1000
+        )
+        return md
+
+    def test_rewrite_file_persists_into_scheduled_entry(
+        self, runner, mock_config_and_registry, tmp_path
+    ):
+        """--rewrite-file with --schedule must store the rewrite text."""
+        from crier.scheduler import load_schedule
+
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+        rewrite_text = "Hand-written short-form hook. https://example.com/sched-flags/"
+        rw = tmp_path / "rw.txt"
+        rw.write_text(rewrite_text + "\n")
+
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "bluesky",
+            "--rewrite-file", str(rw),
+            "--schedule", "2099-01-01 09:00",
+        ])
+        assert result.exit_code == 0, result.output
+
+        pending = [
+            p for p in load_schedule()["scheduled_posts"]
+            if p["status"] == "pending"
+        ]
+        assert len(pending) == 1
+        assert pending[0]["rewrite"] == rewrite_text
+
+    def test_dry_run_with_schedule_creates_no_entry(
+        self, runner, mock_config_and_registry
+    ):
+        """--dry-run with --schedule must not persist scheduled posts."""
+        from crier.scheduler import load_schedule
+
+        md = self._write_post(mock_config_and_registry["posts_dir"])
+
+        result = runner.invoke(cli, [
+            "publish", str(md), "--to", "bluesky",
+            "--schedule", "2099-01-01 09:00",
+            "--dry-run",
+        ])
+        assert result.exit_code == 0, result.output
+        assert load_schedule()["scheduled_posts"] == []

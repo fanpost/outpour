@@ -269,7 +269,9 @@ def parse_schedule_time(time_str: str) -> datetime | None:
     - Natural language: "tomorrow 9am", "in 2 hours", "next monday 10am"
 
     The dateparser library is used for natural language parsing.
-    All times are converted to UTC.
+    Naive input (no explicit timezone) is interpreted as LOCAL wall-clock
+    time; explicit offsets in the input are honored. The result is always
+    converted to UTC for storage.
 
     Args:
         time_str: Time string to parse
@@ -283,11 +285,9 @@ def parse_schedule_time(time_str: str) -> datetime | None:
         # Fall back to basic ISO parsing if dateparser not installed
         try:
             dt = datetime.fromisoformat(time_str)
-            if dt.tzinfo is None:
-                # Assume local time, convert to UTC
-                from datetime import timezone as tz
-                dt = dt.replace(tzinfo=tz.utc)
-            return dt
+            # Naive input means local time; astimezone() on a naive
+            # datetime attaches the local zone before converting.
+            return dt.astimezone(timezone.utc)
         except ValueError:
             return None
 
@@ -295,7 +295,11 @@ def parse_schedule_time(time_str: str) -> datetime | None:
     settings = {
         "PREFER_DATES_FROM": "future",
         "RETURN_AS_TIMEZONE_AWARE": True,
-        "TIMEZONE": "UTC",
+        # Naive input is the user's local wall-clock time; convert to
+        # UTC for storage. TIMEZONE only applies when the input itself
+        # carries no timezone, so explicit offsets are still honored.
+        "TIMEZONE": "local",
+        "TO_TIMEZONE": "UTC",
     }
 
     parsed = dateparser.parse(time_str, settings=settings)

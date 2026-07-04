@@ -745,3 +745,41 @@ class TestCleanupOldPostsEdgeCases:
 
         posts = list_scheduled_posts()
         assert len(posts) == 2  # recent + pending remain
+
+
+class TestParseScheduleTimeLocalSemantics:
+    """Naive schedule times must be interpreted as LOCAL time, stored as UTC.
+
+    Regression: settings TIMEZONE="UTC" made dateparser read the user's
+    input as UTC, so "2026-07-05 12:00" typed in CDT fired at 07:00 local.
+    A bare date shifted the post to 19:00 the previous local day.
+    """
+
+    def test_naive_input_interpreted_as_local_time(self):
+        """A naive datetime string means local wall-clock time."""
+        result = parse_schedule_time("2026-07-05 12:00")
+        assert result is not None
+        assert result.tzinfo is not None
+        expected = datetime(2026, 7, 5, 12, 0).astimezone(timezone.utc)
+        assert result == expected
+
+    def test_explicit_offset_respected(self):
+        """An explicit UTC offset in the input is honored, not overridden."""
+        result = parse_schedule_time("2026-07-05T12:00:00+02:00")
+        assert result is not None
+        assert result == datetime(2026, 7, 5, 10, 0, tzinfo=timezone.utc)
+
+    def test_result_is_utc(self):
+        """Returned datetime is normalized to UTC."""
+        result = parse_schedule_time("2026-07-05 12:00")
+        assert result is not None
+        assert result.utcoffset() == timedelta(0)
+
+    def test_iso_fallback_without_dateparser_uses_local(self, monkeypatch):
+        """The no-dateparser fallback also treats naive input as local."""
+        import sys
+        monkeypatch.setitem(sys.modules, "dateparser", None)
+        result = parse_schedule_time("2026-07-05 12:00")
+        assert result is not None
+        expected = datetime(2026, 7, 5, 12, 0).astimezone(timezone.utc)
+        assert result == expected

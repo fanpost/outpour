@@ -643,6 +643,13 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                     parts.append(f"{info_count} info")
                 console.print(f"[dim]Pre-publish check: {', '.join(parts)}. Continuing...[/dim]")
 
+    # Materialize --rewrite-file into rewrite_content before any branch
+    # consumes it. The scheduling branch below returns early, so reading
+    # the file later would silently drop the rewrite from scheduled posts.
+    if rewrite_file:
+        with open(rewrite_file) as f:
+            rewrite_content = f.read().strip()
+
     # Handle scheduling if --schedule is provided
     if schedule_time:
         from .scheduler import parse_schedule_time, create_scheduled_post
@@ -662,6 +669,29 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 console.print("  --schedule 'tomorrow 9am'")
                 console.print("  --schedule 'in 2 hours'")
             raise SystemExit(1)
+
+        # Preview without persisting when --dry-run is set
+        if dry_run:
+            local_time = scheduled_dt.astimezone()
+            time_str = local_time.strftime('%Y-%m-%d %H:%M %Z')
+            if json_output:
+                output = {
+                    "command": "publish",
+                    "scheduled": True,
+                    "dry_run": True,
+                    "file": file,
+                    "platforms": list(platforms),
+                    "scheduled_time": scheduled_dt.isoformat(),
+                    "rewrite": rewrite_content,
+                }
+                print(json_module.dumps(output, indent=2, default=str))
+            else:
+                console.print(f"[bold]Dry Run[/bold] - would schedule for {time_str}")
+                for platform_name in platforms:
+                    console.print(f"  • {platform_name}")
+                if rewrite_content:
+                    console.print(f"  [dim]rewrite: {len(rewrite_content)} chars[/dim]")
+            return
 
         # Create scheduled posts for each platform
         scheduled_posts = []
@@ -731,12 +761,10 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
     if draft:
         article.published = False
 
-    # Handle rewrite content
+    # Handle rewrite content (--rewrite-file was materialized into
+    # rewrite_content before the scheduling branch above)
     is_rewritten = False
     posted_content = None
-    if rewrite_file:
-        with open(rewrite_file) as f:
-            rewrite_content = f.read().strip()
     if rewrite_content:
         is_rewritten = True
         posted_content = rewrite_content

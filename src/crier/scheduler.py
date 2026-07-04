@@ -49,6 +49,15 @@ class ScheduledPost:
     profile: str | None = None  # Profile to use instead of single platform
     rewrite_author: str | None = None  # Who authored the rewrite text
     claimed_at: datetime | None = None  # When a runner claimed this post
+    # Full publish option set, so nothing accepted by `publish --schedule`
+    # is silently dropped before `schedule run`:
+    thread: bool = False
+    thread_style: str = "numbered"
+    draft: bool = False
+    auto_rewrite_retry: int | None = None  # None = config default at run time
+    auto_rewrite_truncate: bool | None = None  # None = config default
+    temperature: float | None = None  # LLM override for auto-rewrite
+    model: str | None = None  # LLM model override for auto-rewrite
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for YAML serialization."""
@@ -65,6 +74,13 @@ class ScheduledPost:
             "profile": self.profile,
             "rewrite_author": self.rewrite_author,
             "claimed_at": self.claimed_at.isoformat() if self.claimed_at else None,
+            "thread": self.thread,
+            "thread_style": self.thread_style,
+            "draft": self.draft,
+            "auto_rewrite_retry": self.auto_rewrite_retry,
+            "auto_rewrite_truncate": self.auto_rewrite_truncate,
+            "temperature": self.temperature,
+            "model": self.model,
         }
 
     @classmethod
@@ -91,6 +107,13 @@ class ScheduledPost:
                 _ensure_aware(datetime.fromisoformat(claimed_at))
                 if claimed_at else None
             ),
+            thread=data.get("thread", False),
+            thread_style=data.get("thread_style", "numbered"),
+            draft=data.get("draft", False),
+            auto_rewrite_retry=data.get("auto_rewrite_retry"),
+            auto_rewrite_truncate=data.get("auto_rewrite_truncate"),
+            temperature=data.get("temperature"),
+            model=data.get("model"),
         )
 
 
@@ -180,6 +203,13 @@ def create_scheduled_post(
     auto_rewrite: bool = False,
     profile: str | None = None,
     rewrite_author: str | None = None,
+    thread: bool = False,
+    thread_style: str = "numbered",
+    draft: bool = False,
+    auto_rewrite_retry: int | None = None,
+    auto_rewrite_truncate: bool | None = None,
+    temperature: float | None = None,
+    model: str | None = None,
 ) -> ScheduledPost:
     """Create and save a new scheduled post.
 
@@ -191,6 +221,13 @@ def create_scheduled_post(
         auto_rewrite: Whether to use LLM auto-rewrite
         profile: Optional profile name to use instead of platform
         rewrite_author: Label for who wrote the rewrite content
+        thread: Split into a thread on platforms that support it
+        thread_style: Thread numbering style (numbered, simple, emoji)
+        draft: Publish as draft
+        auto_rewrite_retry: Retry count override (None = config default)
+        auto_rewrite_truncate: Truncate fallback override (None = config)
+        temperature: LLM temperature override for auto-rewrite
+        model: LLM model override for auto-rewrite
 
     Returns:
         The created ScheduledPost
@@ -210,6 +247,13 @@ def create_scheduled_post(
         auto_rewrite=auto_rewrite,
         profile=profile,
         rewrite_author=rewrite_author,
+        thread=thread,
+        thread_style=thread_style,
+        draft=draft,
+        auto_rewrite_retry=auto_rewrite_retry,
+        auto_rewrite_truncate=auto_rewrite_truncate,
+        temperature=temperature,
+        model=model,
     )
 
     with _schedule_lock():

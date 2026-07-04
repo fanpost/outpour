@@ -480,37 +480,6 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
     # Silent mode: suppress non-essential output
     silent = quiet or json_output
 
-    # Scheduled entries do not carry these options; reject the combination
-    # loudly rather than silently dropping them (the --rewrite-file
-    # regression family: an option accepted here but lost before
-    # `schedule run`). Checked first so the user is not shown pre-publish
-    # checker output for a command that cannot proceed.
-    if schedule_time:
-        unsupported = []
-        if thread:
-            unsupported.append("--thread")
-        if draft:
-            unsupported.append("--draft")
-        if temperature is not None:
-            unsupported.append("--temperature")
-        if model_override is not None:
-            unsupported.append("--model")
-        if auto_rewrite_retry is not None:
-            unsupported.append("--auto-rewrite-retry")
-        if auto_rewrite_truncate is not None:
-            unsupported.append("--auto-rewrite-truncate")
-        if unsupported:
-            msg = (
-                f"{', '.join(unsupported)} cannot be combined with"
-                " --schedule: scheduled posts do not carry"
-                " these options yet"
-            )
-            if json_output:
-                print(json_module.dumps({"success": False, "error": msg}))
-            else:
-                console.print(f"[red]Error: {msg}[/red]")
-            raise SystemExit(1)
-
     # Validate --auto-rewrite requires LLM configuration
     llm_provider = None
     if auto_rewrite:
@@ -735,6 +704,13 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 auto_rewrite=auto_rewrite,
                 profile=profile_name,
                 rewrite_author=rewrite_author,
+                thread=thread,
+                thread_style=thread_style,
+                draft=draft,
+                auto_rewrite_retry=auto_rewrite_retry,
+                auto_rewrite_truncate=auto_rewrite_truncate,
+                temperature=temperature,
+                model=model_override,
             )
             scheduled_posts.append(post)
 
@@ -4254,6 +4230,9 @@ def schedule_run(dry_run: bool, json_output: bool):
                 console.print(f"[red]✗[/red] {post.id}: {e}")
             continue
 
+        if post.draft:
+            article.published = False
+
         # Get platform
         platform_name = post.platform
         if platform_name not in PLATFORMS:
@@ -4308,7 +4287,11 @@ def schedule_run(dry_run: bool, json_output: bool):
                 from .llm import get_provider
                 from .rewrite import auto_rewrite_for_platform
 
-                llm_provider = get_provider(get_llm_config())
+                llm_provider = get_provider(
+                    get_llm_config(),
+                    temperature=post.temperature,
+                    model=post.model,
+                )
                 if llm_provider is None:
                     raise RuntimeError(
                         "auto_rewrite requested but the LLM provider"
@@ -4318,10 +4301,20 @@ def schedule_run(dry_run: bool, json_output: bool):
                 platform_cls = get_platform(platform_name)
                 max_len = platform_cls(api_key).max_content_length
                 if max_len and len(article.body) > max_len:
+                    retry = (
+                        post.auto_rewrite_retry
+                        if post.auto_rewrite_retry is not None
+                        else get_llm_retry_count()
+                    )
+                    truncate = (
+                        post.auto_rewrite_truncate
+                        if post.auto_rewrite_truncate is not None
+                        else get_llm_truncate_fallback()
+                    )
                     rw = auto_rewrite_for_platform(
                         article, platform_name, max_len, llm_provider,
-                        retry_count=get_llm_retry_count(),
-                        truncate_fallback=get_llm_truncate_fallback(),
+                        retry_count=retry,
+                        truncate_fallback=truncate,
                         silent=json_output, console=console,
                     )
                     if not rw.success:
@@ -4345,7 +4338,34 @@ def schedule_run(dry_run: bool, json_output: bool):
         try:
             platform_cls = get_platform(platform_name)
             platform = platform_cls(api_key)
-            result = platform.publish(article)
+
+            if post.thread and not platform.supports_threads:
+                raise RuntimeError(
+                    f"{platform_name} does not support thread posting"
+                )
+
+            if post.thread:
+                from .threading import split_into_thread
+
+                thread_posts = split_into_thread(
+                    article.body,
+                    max_length=platform.max_content_length or 300,
+                    style=post.thread_style,
+                    max_posts=platform.thread_max_posts,
+                )
+                if len(thread_posts) > 1:
+                    tr = platform.publish_thread(thread_posts)
+                    # Adapt to the PublishResult shape the code below reads
+                    result = type("Result", (), {
+                        "success": tr.success,
+                        "article_id": tr.root_id,
+                        "url": tr.root_url,
+                        "error": tr.error,
+                    })()
+                else:
+                    result = platform.publish(article)
+            else:
+                result = platform.publish(article)
 
             if result.success:
                 update_scheduled_post(post.id, status="published")

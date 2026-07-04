@@ -3500,3 +3500,36 @@ class TestRetryRequest:
 
         _, kwargs = mock_post.call_args
         assert kwargs["timeout"] == 60
+
+
+class TestHashnodeNonJsonResponse:
+    """The GraphQL endpoint can answer with a web page instead of JSON.
+
+    Hashnode redirects API calls to a changelog page since moving the
+    API to paid access (2026-05-13). resp.json() then raised a bare
+    JSONDecodeError ('Expecting value: line 1 column 1'), and doctor
+    showed that instead of the real cause. Worse, returning an error
+    dict would make list_articles silently return [] and doctor report
+    Healthy. The only honest behavior is to raise with the final URL.
+    """
+
+    def test_graphql_raises_clear_error_on_html_response(self):
+        from unittest.mock import MagicMock, patch
+        from crier.platforms.hashnode import Hashnode
+
+        hn = Hashnode("token123")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.url = "https://hashnode.com/changelog/2026-05-13-graphql-api-paid-access"
+        resp.text = "<!DOCTYPE html><html>...</html>"
+        resp.json.side_effect = ValueError(
+            "Expecting value: line 1 column 1 (char 0)"
+        )
+
+        with patch.object(Hashnode, "retry_request", return_value=resp):
+            with pytest.raises(RuntimeError) as exc:
+                hn._graphql("query { me { username } }")
+
+        msg = str(exc.value)
+        assert "hashnode.com/changelog" in msg
+        assert "non-JSON" in msg

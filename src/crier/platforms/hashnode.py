@@ -35,7 +35,17 @@ class Hashnode(Platform):
         }
 
     def _graphql(self, query: str, variables: dict | None = None) -> dict[str, Any]:
-        """Execute a GraphQL query."""
+        """Execute a GraphQL query.
+
+        Raises:
+            RuntimeError: if the endpoint answers with a non-JSON page.
+                Hashnode redirects API calls to a changelog/announcement
+                page when access is denied (e.g. the 2026-05 move of the
+                GraphQL API to paid access); the final URL states why.
+                Raising is deliberate: returning an error dict would let
+                callers like list_articles quietly treat it as "no posts"
+                and doctor would falsely report the platform healthy.
+        """
         resp = self.retry_request(
             "post",
             self.base_url,
@@ -44,7 +54,14 @@ class Hashnode(Platform):
         )
 
         if resp.status_code == 200:
-            return resp.json()
+            try:
+                return resp.json()
+            except ValueError as e:  # JSONDecodeError subclasses ValueError
+                raise RuntimeError(
+                    "non-JSON response from the Hashnode GraphQL API;"
+                    f" the request ended at {resp.url} - visit that URL"
+                    " for the reason (API access may require a paid plan)"
+                ) from e
         return {"errors": [{"message": f"{resp.status_code}: {resp.text}"}]}
 
     def _get_publication_id(self) -> str | None:

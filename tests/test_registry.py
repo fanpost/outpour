@@ -107,14 +107,24 @@ class TestSlug:
             title="Duplicate",
             canonical_url="https://example.com/dup2",
         )
-        # slug2 should be different because dup1 already exists with that slug
-        # but canonical_url differs, so after slug lookup fails (slug matches
-        # an article with different canonical_url), a new unique slug is needed.
-        # Actually, get_or_create_slug checks slug match first: if slug exists, returns it.
-        # The slug collision only happens if there's no canonical_url/source match.
-        # Since canonical_url "https://example.com/dup2" doesn't match dup1,
-        # but the slug "duplicate" already exists, it returns the existing slug.
-        assert slug1 == slug2
+        # Different canonical identities must not merge through a title slug.
+        assert slug1 != slug2
+
+    def test_same_title_publications_preserve_both_identities(self, tmp_registry):
+        record_publication("https://example.com/a", "devto", "a", "https://dev/a",
+                           title="Same", source_file="a.md")
+        save_stats("https://example.com/a", "devto", views=42)
+        record_publication("https://example.com/b", "devto", "b", "https://dev/b",
+                           title="Same", source_file="b.md")
+        assert get_publication_id("https://example.com/a", "devto") == "a"
+        assert get_publication_id("https://example.com/b", "devto") == "b"
+        assert get_cached_stats("https://example.com/a", "devto")["views"] == 42
+
+    def test_source_only_title_collision_keeps_distinct_articles(self, tmp_registry):
+        first = get_or_create_slug("Same", source_file="a.md")
+        second = get_or_create_slug("Same", source_file="b.md")
+        assert first != second
+        assert get_or_create_slug("Renamed", source_file="a.md") == first
 
     def test_find_slug_by_canonical_url(self, tmp_registry):
         get_or_create_slug(

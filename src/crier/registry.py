@@ -215,9 +215,12 @@ def get_or_create_slug(
     # Try exact slug match
     slug = make_slug(title)
     row = conn.execute(
-        "SELECT slug FROM articles WHERE slug = ?", (slug,)
+        "SELECT slug, canonical_url, source_file FROM articles WHERE slug = ?", (slug,)
     ).fetchone()
-    if row:
+    if row and not (
+        (canonical_url and row["canonical_url"] and canonical_url != row["canonical_url"])
+        or (source_file and row["source_file"] and str(source_file) != row["source_file"])
+    ):
         return row["slug"]
 
     # Create new article

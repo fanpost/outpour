@@ -189,3 +189,91 @@ def test_publish_one_platform_exception_wrapped(mode, key, parse, get_plat):
     assert outcome.result.success is False
     assert "boom" in outcome.result.error
     assert isinstance(outcome, PublishOutcome)
+
+
+def test_prepared_plan_executes_snapshot_and_records_once(recording_platform, tmp_path, monkeypatch):
+    from crier.publishing import PublishRequest, prepare_request, execute_plan, record_outcome
+    from crier.registry import get_all_articles, get_connection
+    md = tmp_path / 'post.md'
+    md.write_text('---\ntitle: Snapshot\ntags: [original]\n---\nOriginal body.')
+    plan = prepare_request(PublishRequest(md, 'test_platform'))
+    md.write_text('---\ntitle: Changed\n---\nChanged body.')
+    outcome = record_outcome(execute_plan(plan))
+    record_outcome(outcome)
+    assert recording_platform.articles[0].title == 'Snapshot'
+    assert recording_platform.articles[0].body == 'Original body.'
+    assert outcome.state.value == 'recorded'
+    assert len(get_all_articles()) == 1
+    assert get_connection().execute('SELECT count(*) FROM publications').fetchone()[0] == 1
+    assert 'test-secret' not in repr(plan)
+
+
+def test_service_dry_run_has_no_remote_or_registry_effects(recording_platform, tmp_path):
+    from crier.publishing import PublishRequest, publish_and_record, record_outcome
+    from crier.registry import get_all_articles
+    md = tmp_path / 'preview.md'
+    md.write_text('---\ntitle: Preview\n---\nBody.')
+    outcome = publish_and_record(PublishRequest(md, 'test_platform'), dry_run=True)
+    record_outcome(outcome)
+    assert outcome.state.value == 'preview'
+    assert not recording_platform.articles
+    assert get_all_articles() == {}
+
+
+def test_recording_failure_retains_remote_success(recording_platform, tmp_path, monkeypatch):
+    from crier.publishing import PublishRequest, publish_and_record
+    md = tmp_path / 'post.md'
+    md.write_text('---\ntitle: Remote success\n---\nBody.')
+    def fail(**kw):
+        raise RuntimeError('database unavailable')
+    monkeypatch.setattr('crier.registry.record_publication', fail)
+    outcome = publish_and_record(PublishRequest(md, 'test_platform'))
+    assert outcome.remote_success
+    assert outcome.state.value == 'recording_failed'
+    assert outcome.recording_error == 'database unavailable'
+    assert len(recording_platform.articles) == 1
+
+
+def test_service_preserves_thread_ids_and_rewrite_author(recording_platform, tmp_path):
+    from crier.publishing import PublishRequest, RewriteOptions, ThreadOptions, publish_and_record
+    from crier.registry import get_thread_ids, get_connection
+    md = tmp_path / 'thread.md'
+    md.write_text('---\ntitle: Thread\n---\nBody.')
+    outcome = publish_and_record(PublishRequest(md, 'test_platform',
+        rewrite=RewriteOptions(content='First. ' * 30, author='Alex'),
+        thread=ThreadOptions(enabled=True)))
+    assert outcome.state.value == 'recorded'
+    assert get_thread_ids('thread', 'test_platform') == ['thread-1', 'thread-2']
+    row = get_connection().execute('SELECT rewrite_author,posted_content FROM publications').fetchone()
+    assert row[0] == 'Alex'
+    assert row[1] == 'First. ' * 30
+
+
+def test_partial_thread_retains_remote_ids(recording_platform, tmp_path, monkeypatch):
+    from crier.publishing import PublishRequest, ThreadOptions, publish_and_record
+    from crier.platforms.base import ThreadPublishResult
+    md = tmp_path / 'partial.md'
+    md.write_text('---\ntitle: Partial\n---\n' + 'First sentence. ' * 40)
+    monkeypatch.setattr(recording_platform, 'publish_thread', lambda self, posts:
+        ThreadPublishResult(False, self.name, root_id='partial-1',
+                            post_ids=['partial-1'], error='second post failed'))
+    outcome = publish_and_record(PublishRequest(md, 'test_platform', thread=ThreadOptions(True)))
+    assert not outcome.success
+    assert outcome.thread_ids == ['partial-1']
+    assert outcome.error == 'second post failed'
+
+
+def test_auto_rewrite_runs_once_and_preserves_explicit_attribution(recording_platform, tmp_path):
+    from crier.publishing import PublishRequest, RewriteOptions, publish_and_record
+    from crier.llm.provider import RewriteResult
+    md = tmp_path / 'auto.md'
+    md.write_text('---\ntitle: Auto\n---\n' + 'Long body. ' * 100)
+    provider = MagicMock()
+    provider.model = 'unit-model'
+    provider.rewrite.return_value = RewriteResult('Short text.', 'unit-model')
+    outcome = publish_and_record(PublishRequest(md, 'test_platform', rewrite=RewriteOptions(
+        auto=True, provider=provider, author='Alex', retry_count=0, truncate=False)))
+    assert outcome.success
+    assert recording_platform.articles[0].body == 'Short text.'
+    assert outcome.rewrite_author == 'Alex'
+    assert provider.rewrite.call_count == 1

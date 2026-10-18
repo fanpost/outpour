@@ -421,6 +421,7 @@ def record_thread_publication(
     source_file: str | Path | None = None,
     rewritten: bool = False,
     rewrite_author: str | None = None,
+    posted_content: str | None = None,
 ) -> None:
     """Record a thread publication to the registry."""
     conn = get_connection()
@@ -441,19 +442,19 @@ def record_thread_publication(
     conn.execute(
         "INSERT INTO publications "
         "(slug, platform, platform_id, url, published_at, "
-        "is_thread, thread_ids, thread_urls, rewritten, rewrite_author) "
-        "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?) "
+        "is_thread, thread_ids, thread_urls, rewritten, rewrite_author, posted_content) "
+        "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?) "
         "ON CONFLICT(slug, platform) DO UPDATE SET "
         "platform_id = excluded.platform_id, url = excluded.url, "
         "published_at = excluded.published_at, "
         "is_thread = excluded.is_thread, thread_ids = excluded.thread_ids, "
         "thread_urls = excluded.thread_urls, "
         "rewritten = excluded.rewritten, rewrite_author = excluded.rewrite_author, "
-        "posted_content = NULL, "
+        "posted_content = excluded.posted_content, "
         "deleted_at = NULL, last_error = NULL, last_error_at = NULL",
         (slug, platform, root_id, root_url, now,
          json.dumps(thread_ids), json.dumps(thread_urls) if thread_urls else None,
-         1 if rewritten else 0, rewrite_author),
+         1 if rewritten else 0, rewrite_author, posted_content),
     )
     conn.commit()
 

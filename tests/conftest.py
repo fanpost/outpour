@@ -120,3 +120,55 @@ def configured_platforms(tmp_config):
     }
     tmp_config.write_text(yaml.dump(config))
     return tmp_config
+
+
+@pytest.fixture(autouse=True)
+def prevent_live_http(monkeypatch):
+    """Tests must supply remote responses rather than contact publishing services."""
+    import requests
+
+    def blocked_request(*args, **kwargs):
+        raise AssertionError('Unmocked HTTP request blocked during tests')
+
+    monkeypatch.setattr(requests.sessions.Session, 'request', blocked_request)
+
+
+@pytest.fixture
+def recording_platform(tmp_registry, monkeypatch):
+    """A real adapter contract with an in-memory remote, isolated from the registry."""
+    from crier.platforms import PLATFORMS
+    from crier.platforms.base import Platform, PublishResult, ThreadPublishResult
+    from dataclasses import replace
+
+    class RecordingPlatform(Platform):
+        name = 'test_platform'
+        supports_threads = True
+        max_content_length = 100
+        articles = []
+        threads = []
+        failure = None
+
+        def publish(self, article):
+            self.articles.append(replace(article, tags=list(article.tags or [])))
+            if self.failure:
+                raise RuntimeError(self.failure)
+            return PublishResult(True, self.name, 'remote-1', 'https://remote/1')
+
+        def publish_thread(self, posts):
+            self.threads.append(list(posts))
+            return ThreadPublishResult(True, self.name, 'thread-1', 'https://remote/t1',
+                                       ['thread-1', 'thread-2'],
+                                       ['https://remote/t1', 'https://remote/t2'])
+
+        def update(self, article_id, article):
+            return self.publish(article)
+
+        def list_articles(self, limit=10):
+            return []
+
+        def get_article(self, article_id):
+            return None
+
+    monkeypatch.setitem(PLATFORMS, RecordingPlatform.name, RecordingPlatform)
+    monkeypatch.setenv('CRIER_TEST_PLATFORM_API_KEY', 'test-secret')
+    return RecordingPlatform

@@ -4,6 +4,7 @@ Preparation reads content/configuration and may call an LLM. Execution sends the
 prepared snapshot; recording owns registry effects. Compatibility publish_one()
 intentionally executes without recording.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
@@ -27,6 +28,7 @@ class ThreadStyle(str, Enum):
 class PublicationState(str, Enum):
     PREVIEW = "preview"
     REMOTE_FAILED = "remote_failed"
+    FAILURE_RECORDED = "failure_recorded"
     REMOTE_SUCCEEDED = "remote_succeeded"
     RECORDED = "recorded"
     RECORDING_FAILED = "recording_failed"
@@ -90,8 +92,11 @@ class PublishOutcome:
 
     def __post_init__(self):
         if self.state is None:
-            self.state = (PublicationState.REMOTE_SUCCEEDED if self.result.success
-                          else PublicationState.REMOTE_FAILED)
+            self.state = (
+                PublicationState.REMOTE_SUCCEEDED
+                if self.result.success
+                else PublicationState.REMOTE_FAILED
+            )
 
     @property
     def remote_success(self) -> bool:
@@ -142,8 +147,13 @@ class PublishOutcome:
         return self.result.compose_url if isinstance(self.result, PublishResult) else None
 
 
-def prepare_request(request: PublishRequest, *, source_article: Article | None = None,
-                    silent: bool = True, console=None) -> PublishPlan:
+def prepare_request(
+    request: PublishRequest,
+    *,
+    source_article: Article | None = None,
+    silent: bool = True,
+    console=None,
+) -> PublishPlan:
     """Read source/config and optionally rewrite; never publish or record."""
     request = replace(request, source_file=Path(request.source_file).expanduser().resolve())
     mode = get_platform_mode(request.platform)
@@ -156,8 +166,11 @@ def prepare_request(request: PublishRequest, *, source_article: Article | None =
         plan.error = f"No API key configured for {request.platform}"
         return plan
     try:
-        article = (source_article if source_article is not None
-                   else parse_markdown_file(str(request.source_file)))
+        article = (
+            source_article
+            if source_article is not None
+            else parse_markdown_file(str(request.source_file))
+        )
         article = replace(article, tags=list(article.tags) if article.tags is not None else None)
         plan.article = article
         if not article.title:
@@ -177,29 +190,45 @@ def prepare_request(request: PublishRequest, *, source_article: Article | None =
             plan.posted_content = rewrite.content
             if plan.rewrite_author is None:
                 from .config import get_rewrite_author
+
                 plan.rewrite_author = get_rewrite_author()
         elif rewrite.auto:
             from .config import (
-                get_llm_config, get_llm_retry_count, get_llm_truncate_fallback,
+                get_llm_config,
+                get_llm_retry_count,
+                get_llm_truncate_fallback,
                 is_llm_configured,
             )
+
             provider = rewrite.provider
             if provider is None and is_llm_configured():
                 from .llm import get_provider
-                provider = get_provider(get_llm_config(), temperature=rewrite.temperature,
-                                        model=rewrite.model)
+
+                provider = get_provider(
+                    get_llm_config(), temperature=rewrite.temperature, model=rewrite.model
+                )
             if provider is None:
                 plan.error = "auto_rewrite requested but no LLM is configured or provider available"
                 return plan
             max_len = plan.adapter.max_content_length
             if max_len and len(article.body) > max_len:
                 rw = auto_rewrite_for_platform(
-                    article, request.platform, max_len, provider,
-                    retry_count=(rewrite.retry_count if rewrite.retry_count is not None
-                                 else get_llm_retry_count()),
-                    truncate_fallback=(rewrite.truncate if rewrite.truncate is not None
-                                       else get_llm_truncate_fallback()),
-                    silent=silent, console=console,
+                    article,
+                    request.platform,
+                    max_len,
+                    provider,
+                    retry_count=(
+                        rewrite.retry_count
+                        if rewrite.retry_count is not None
+                        else get_llm_retry_count()
+                    ),
+                    truncate_fallback=(
+                        rewrite.truncate
+                        if rewrite.truncate is not None
+                        else get_llm_truncate_fallback()
+                    ),
+                    silent=silent,
+                    console=console,
                 )
                 if not rw.success:
                     plan.error = rw.error or "auto-rewrite failed"
@@ -209,121 +238,207 @@ def prepare_request(request: PublishRequest, *, source_article: Article | None =
                 plan.posted_content = rw.rewrite_text
                 if plan.rewrite_author is None:
                     plan.rewrite_author = f"llm:{provider.model}"
-        if (rewrite.content and not request.thread.enabled and not rewrite.auto
-                and plan.adapter.max_content_length
-                and len(plan.article.body) > plan.adapter.max_content_length):
-            plan.error = (f"Rewrite content too long: {len(plan.article.body)} chars "
-                          f"(limit: {plan.adapter.max_content_length})")
+        if not plan.rewritten:
+            plan.rewrite_author = None
+        if (
+            rewrite.content
+            and not request.thread.enabled
+            and not rewrite.auto
+            and plan.adapter.max_content_length
+            and len(plan.article.body) > plan.adapter.max_content_length
+        ):
+            plan.error = (
+                f"Rewrite content too long: {len(plan.article.body)} chars "
+                f"(limit: {plan.adapter.max_content_length})"
+            )
             return plan
         if request.thread.enabled:
             from .threading import split_into_thread
+
             plan.thread_posts = split_into_thread(
-                plan.article.body, max_length=plan.adapter.max_content_length or 300,
-                style=request.thread.style.value, max_posts=plan.adapter.thread_max_posts,
+                plan.article.body,
+                max_length=plan.adapter.max_content_length or 300,
+                style=request.thread.style.value,
+                max_posts=plan.adapter.thread_max_posts,
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — isolate adapter and recording failures
         plan.error = str(exc)
     return plan
 
 
-def _outcome(plan: PublishPlan, result: PublishResult | ThreadPublishResult,
-             *, state: PublicationState | None = None) -> PublishOutcome:
-    return PublishOutcome(result, plan.article, rewritten=plan.rewritten,
-                          posted_content=plan.posted_content, rewrite_author=plan.rewrite_author,
-                          request=plan.request, state=state)
+def _outcome(
+    plan: PublishPlan,
+    result: PublishResult | ThreadPublishResult,
+    *,
+    state: PublicationState | None = None,
+) -> PublishOutcome:
+    return PublishOutcome(
+        result,
+        plan.article,
+        rewritten=plan.rewritten,
+        posted_content=plan.posted_content,
+        rewrite_author=plan.rewrite_author,
+        request=plan.request,
+        state=state,
+    )
 
 
 def execute_plan(plan: PublishPlan) -> PublishOutcome:
     """Publish exactly the prepared article, retaining the actual adapter result."""
     if plan.error or plan.article is None or plan.adapter is None:
-        return _outcome(plan, PublishResult(False, plan.platform,
-                                           error=plan.error or "Incomplete publish plan"))
+        return _outcome(
+            plan, PublishResult(False, plan.platform, error=plan.error or "Incomplete publish plan")
+        )
     try:
         if plan.thread_posts and len(plan.thread_posts) > 1:
             result = plan.adapter.publish_thread(plan.thread_posts)
         else:
             result = plan.adapter.publish(plan.article)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — isolate adapter and recording failures
         result = PublishResult(False, plan.platform, error=str(exc))
     return _outcome(plan, result)
 
 
 def record_outcome(outcome: PublishOutcome) -> PublishOutcome:
     """Record once; distinguish persistence failure from a successful remote write."""
-    if outcome.state in (PublicationState.PREVIEW, PublicationState.RECORDED,
-                         PublicationState.RECORDING_FAILED):
+    if outcome.state in (
+        PublicationState.PREVIEW,
+        PublicationState.RECORDED,
+        PublicationState.RECORDING_FAILED,
+        PublicationState.FAILURE_RECORDED,
+    ):
         return outcome
     if outcome.article is None:
         return outcome
     if outcome.requires_confirmation:
         return outcome
     from .registry import record_failure, record_publication, record_thread_publication
+
     article = outcome.article
     source = str(outcome.request.source_file) if outcome.request else None
     platform = outcome.request.platform if outcome.request else outcome.result.platform
-    identity = dict(canonical_url=article.canonical_url, platform=platform,
-                    title=article.title, source_file=source)
+    identity = {
+        "canonical_url": article.canonical_url,
+        "platform": platform,
+        "title": article.title,
+        "source_file": source,
+    }
     try:
         if not outcome.result.success:
             record_failure(**identity, error_msg=outcome.result.error or "Unknown publish error")
+            outcome.state = PublicationState.FAILURE_RECORDED
         elif isinstance(outcome.result, ThreadPublishResult):
             record_thread_publication(
-                **identity, root_id=outcome.result.root_id, root_url=outcome.result.root_url,
-                thread_ids=outcome.result.post_ids or [], thread_urls=outcome.result.post_urls,
-                rewritten=outcome.rewritten, rewrite_author=outcome.rewrite_author,
+                **identity,
+                root_id=outcome.result.root_id,
+                root_url=outcome.result.root_url,
+                thread_ids=outcome.result.post_ids or [],
+                thread_urls=outcome.result.post_urls,
+                rewritten=outcome.rewritten,
+                rewrite_author=outcome.rewrite_author,
                 posted_content=outcome.posted_content,
             )
             outcome.state = PublicationState.RECORDED
         else:
             record_publication(
-                **identity, article_id=outcome.article_id, url=outcome.url,
-                rewritten=outcome.rewritten, rewrite_author=outcome.rewrite_author,
+                **identity,
+                article_id=outcome.article_id,
+                url=outcome.url,
+                rewritten=outcome.rewritten,
+                rewrite_author=outcome.rewrite_author,
                 posted_content=outcome.posted_content,
             )
             outcome.state = PublicationState.RECORDED
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — isolate adapter and recording failures
         outcome.recording_error = str(exc)
-        if outcome.remote_success:
-            outcome.state = PublicationState.RECORDING_FAILED
+        outcome.state = PublicationState.RECORDING_FAILED
     return outcome
 
 
-def publish_and_record(request: PublishRequest, *, dry_run: bool = False,
-                       source_article: Article | None = None,
-                       silent: bool = True, console=None) -> PublishOutcome:
+def publish_and_record(
+    request: PublishRequest,
+    *,
+    dry_run: bool = False,
+    source_article: Article | None = None,
+    silent: bool = True,
+    console=None,
+) -> PublishOutcome:
     plan = prepare_request(request, source_article=source_article, silent=silent, console=console)
     if dry_run and not plan.error:
         return _outcome(plan, PublishResult(True, plan.platform), state=PublicationState.PREVIEW)
     if dry_run:
-        return _outcome(plan, PublishResult(False, plan.platform, error=plan.error),
-                        state=PublicationState.PREVIEW)
+        return _outcome(
+            plan,
+            PublishResult(False, plan.platform, error=plan.error),
+            state=PublicationState.PREVIEW,
+        )
     return record_outcome(execute_plan(plan))
 
 
-def prepare_publish(file_path: str | Path, platform: str, *,
-                    rewrite_content: str | None = None, rewrite_author: str | None = None,
-                    auto_rewrite: bool = False, llm_provider=None, auto_rewrite_retry: int = 0,
-                    auto_rewrite_truncate: bool = False, draft: bool = False,
-                    silent: bool = True, console=None) -> PublishPlan:
+def prepare_publish(
+    file_path: str | Path,
+    platform: str,
+    *,
+    rewrite_content: str | None = None,
+    rewrite_author: str | None = None,
+    auto_rewrite: bool = False,
+    llm_provider=None,
+    auto_rewrite_retry: int = 0,
+    auto_rewrite_truncate: bool = False,
+    draft: bool = False,
+    silent: bool = True,
+    console=None,
+) -> PublishPlan:
     """Compatibility adapter: preparation only, with no registry writes."""
-    request = PublishRequest(Path(file_path), platform, draft=draft, rewrite=RewriteOptions(
-        content=rewrite_content, author=rewrite_author, auto=auto_rewrite, provider=llm_provider,
-        retry_count=auto_rewrite_retry, truncate=auto_rewrite_truncate))
+    request = PublishRequest(
+        Path(file_path),
+        platform,
+        draft=draft,
+        rewrite=RewriteOptions(
+            content=rewrite_content,
+            author=rewrite_author,
+            auto=auto_rewrite,
+            provider=llm_provider,
+            retry_count=auto_rewrite_retry,
+            truncate=auto_rewrite_truncate,
+        ),
+    )
     return prepare_request(request, silent=silent, console=console)
 
 
-def publish_one(file_path: str | Path, platform: str, *,
-                rewrite_content: str | None = None, rewrite_author: str | None = None,
-                auto_rewrite: bool = False, llm_provider=None, auto_rewrite_retry: int = 0,
-                auto_rewrite_truncate: bool = False, draft: bool = False, dry_run: bool = False,
-                silent: bool = True, console=None) -> PublishOutcome:
+def publish_one(
+    file_path: str | Path,
+    platform: str,
+    *,
+    rewrite_content: str | None = None,
+    rewrite_author: str | None = None,
+    auto_rewrite: bool = False,
+    llm_provider=None,
+    auto_rewrite_retry: int = 0,
+    auto_rewrite_truncate: bool = False,
+    draft: bool = False,
+    dry_run: bool = False,
+    silent: bool = True,
+    console=None,
+) -> PublishOutcome:
     """Compatibility API: publish a single post, deliberately without recording."""
     plan = prepare_publish(
-        file_path, platform, rewrite_content=rewrite_content, rewrite_author=rewrite_author,
-        auto_rewrite=auto_rewrite, llm_provider=llm_provider,
-        auto_rewrite_retry=auto_rewrite_retry, auto_rewrite_truncate=auto_rewrite_truncate,
-        draft=draft, silent=silent, console=console)
+        file_path,
+        platform,
+        rewrite_content=rewrite_content,
+        rewrite_author=rewrite_author,
+        auto_rewrite=auto_rewrite,
+        llm_provider=llm_provider,
+        auto_rewrite_retry=auto_rewrite_retry,
+        auto_rewrite_truncate=auto_rewrite_truncate,
+        draft=draft,
+        silent=silent,
+        console=console,
+    )
     if dry_run:
-        return _outcome(plan, PublishResult(not bool(plan.error), platform, error=plan.error),
-                        state=PublicationState.PREVIEW)
+        return _outcome(
+            plan,
+            PublishResult(not bool(plan.error), platform, error=plan.error),
+            state=PublicationState.PREVIEW,
+        )
     return execute_plan(plan)

@@ -11,36 +11,59 @@ from rich.table import Table
 
 from . import __version__
 from .config import (
-    get_api_key, set_api_key, load_config, load_global_config,
-    get_profile, set_profile, get_all_profiles,
-    get_content_paths, add_content_path, remove_content_path, set_content_paths,
-    is_manual_mode_key, is_import_mode_key, is_platform_configured,
-    get_platform_mode, is_short_form_platform, get_llm_config, set_llm_config, is_llm_configured,
-    get_llm_retry_count, get_llm_truncate_fallback, get_rewrite_author,
+    add_content_path,
+    get_all_profiles,
+    get_api_key,
+    get_content_paths,
+    get_llm_config,
+    get_llm_retry_count,
+    get_llm_truncate_fallback,
+    get_platform_mode,
+    get_profile,
+    get_rewrite_author,
+    is_import_mode_key,
+    is_llm_configured,
+    is_manual_mode_key,
+    is_platform_configured,
+    is_short_form_platform,
+    load_config,
+    load_global_config,
+    remove_content_path,
+    set_api_key,
+    set_content_paths,
+    set_llm_config,
+    set_profile,
 )
 from .converters import parse_markdown_file
 from .platforms import PLATFORMS, get_platform
+from .registry import (
+    get_all_articles,
+    get_article_by_file,
+    get_failures,
+    get_platform_publications,
+    get_publication_info,
+    get_registry_path,
+    infer_section,
+    is_published,
+    record_failure,
+    record_publication,
+    remove_publication,
+)
 from .rewrite import apply_rewrite
 from .utils import (
-    is_in_content_paths as _is_in_content_paths,
-    parse_date_filter as _parse_date_filter_impl,
-    get_content_date as _get_content_date,
-    get_content_tags as _get_content_tags,
     find_content_files as _find_content_files,
 )
-from .registry import (
-    record_publication,
-    record_thread_publication,
-    record_failure,
-    get_failures,
-    get_registry_path,
-    is_published,
-    get_publication_info,
-    get_platform_publications,
-    get_article_by_file,
-    get_all_articles,
-    remove_publication,
-    infer_section,
+from .utils import (
+    get_content_date as _get_content_date,
+)
+from .utils import (
+    get_content_tags as _get_content_tags,
+)
+from .utils import (
+    is_in_content_paths as _is_in_content_paths,
+)
+from .utils import (
+    parse_date_filter as _parse_date_filter_impl,
 )
 
 console = Console()
@@ -127,8 +150,9 @@ def init():
     configure platforms for cross-posting.
     """
     import questionary
-    from .registry import init_db
+
     from .config import get_db_path
+    from .registry import init_db
 
     console.print("\n[bold]Welcome to Crier![/bold]")
     console.print("Let's set up cross-posting for your project.\n")
@@ -185,8 +209,12 @@ def init():
             console.print(f"[green]✓[/green] Content paths: {', '.join(selected)}")
 
             # Set default exclude patterns for content discovery
-            from .config import (set_exclude_patterns, DEFAULT_EXCLUDE_PATTERNS,
-                                set_file_extensions, DEFAULT_FILE_EXTENSIONS)
+            from .config import (
+                DEFAULT_EXCLUDE_PATTERNS,
+                DEFAULT_FILE_EXTENSIONS,
+                set_exclude_patterns,
+                set_file_extensions,
+            )
             set_exclude_patterns(DEFAULT_EXCLUDE_PATTERNS)
             patterns_str = ', '.join(DEFAULT_EXCLUDE_PATTERNS)
             console.print(f"[green]✓[/green] Exclude patterns: {patterns_str}")
@@ -468,8 +496,10 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
     """
     import json as json_module
     import webbrowser
+
     import pyperclip
     from rich.panel import Panel
+
     from .config import get_default_profile, get_rewrite_author
 
     # Batch mode implies --yes and --json
@@ -652,7 +682,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
 
     # Handle scheduling if --schedule is provided
     if schedule_time:
-        from .scheduler import parse_schedule_time, create_scheduled_post
+        from .scheduler import create_scheduled_post, parse_schedule_time
 
         scheduled_dt = parse_schedule_time(schedule_time)
         if scheduled_dt is None:
@@ -1032,7 +1062,10 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 })()
             else:
                 from .publishing import (
-                    PublishRequest, RewriteOptions, ThreadOptions, publish_and_record,
+                    PublishRequest,
+                    RewriteOptions,
+                    ThreadOptions,
+                    publish_and_record,
                 )
                 if not silent:
                     console.print(f"[dim]Publishing to {platform_name}...[/dim]")
@@ -1817,6 +1850,7 @@ def config_get(key: str, json_output: bool):
         crier config get site_base_url
     """
     import json as json_module
+
     from .config import load_config as _load_config
 
     cfg = _load_config()
@@ -1850,7 +1884,8 @@ def config_get(key: str, json_output: bool):
 def config_show():
     """Show current configuration (hides API keys)."""
     from .config import (
-        get_config_path, get_api_key_source,
+        get_api_key_source,
+        get_config_path,
     )
 
     # Show paths first
@@ -1901,9 +1936,14 @@ def config_show():
         console.print()
 
     # Show exclude patterns
-    from .config import (get_exclude_patterns, DEFAULT_EXCLUDE_PATTERNS,
-                        get_file_extensions, DEFAULT_FILE_EXTENSIONS,
-                        get_default_profile, get_rewrite_author)
+    from .config import (
+        DEFAULT_EXCLUDE_PATTERNS,
+        DEFAULT_FILE_EXTENSIONS,
+        get_default_profile,
+        get_exclude_patterns,
+        get_file_extensions,
+        get_rewrite_author,
+    )
     exclude_patterns = get_exclude_patterns()
     if not exclude_patterns:
         console.print("[bold]Exclude Patterns[/bold] [dim](not configured)[/dim]")
@@ -2312,7 +2352,7 @@ def llm_set(key: str, value: str):
 @llm.command(name="test")
 def llm_test():
     """Test LLM connection with a simple request."""
-    from .llm import get_provider, LLMProviderError
+    from .llm import LLMProviderError, get_provider
 
     if not is_llm_configured():
         console.print("[red]LLM is not configured.[/red]")
@@ -2545,6 +2585,8 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                         "success": False,
                         "error": result.error,
                         "remote_published": outcome.remote_success,
+                        "article_id": outcome.article_id,
+                        "url": outcome.url,
                     })
                     if not silent:
                         console.print(
@@ -2771,23 +2813,30 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
         print(json_module.dumps(output, indent=2))
         return
 
-    console.print(table)
+    if not json_output:
+        console.print(table)
 
-    # Legend
-    console.print("[dim]Legend: ✓ published  ✗ missing  - no canonical URL[/dim]")
+        # Legend
+        console.print("[dim]Legend: ✓ published  ✗ missing  - no canonical URL[/dim]")
 
-    # Summary
-    total_pairs = len(files) * len(check_platforms)
-    console.print("\n[bold]Summary:[/bold]")
-    console.print(f"  Files: {len(files)}")
-    console.print(f"  Platforms: {len(check_platforms)}")
-    console.print(f"  [dim]Total file-platform pairs: {total_pairs}[/dim]")
-    console.print(f"  Published: [green]{uptodate_count}[/green]")
-    console.print(f"  Missing: [red]{len(missing_items)}[/red]")
+        # Summary
+        total_pairs = len(files) * len(check_platforms)
+        console.print("\n[bold]Summary:[/bold]")
+        console.print(f"  Files: {len(files)}")
+        console.print(f"  Platforms: {len(check_platforms)}")
+        console.print(f"  [dim]Total file-platform pairs: {total_pairs}[/dim]")
+        console.print(f"  Published: [green]{uptodate_count}[/green]")
+        console.print(f"  Missing: [red]{len(missing_items)}[/red]")
 
     actionable_count = len(missing_items)
     if actionable_count == 0:
-        console.print("\n[green]All content is up-to-date![/green]")
+        if json_output:
+            print(json_module.dumps({
+                "command": "audit", "mode": "publish", "results": [],
+                "summary": {"succeeded": 0, "failed": 0},
+            }))
+        else:
+            console.print("\n[green]All content is up-to-date![/green]")
         return
 
     if not publish and not dry_run:
@@ -3096,6 +3145,9 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                     "platform": platform,
                     "success": False,
                     "error": result.error,
+                    "remote_published": outcome.remote_success if action == "publish" else False,
+                    "article_id": result.article_id,
+                    "url": result.url,
                     "action": action,
                 })
                 fail_count += 1
@@ -3308,7 +3360,8 @@ def check(files: tuple[str, ...], platform_args: tuple[str, ...], check_all: boo
     """
     import json as json_module
     import sys
-    from .checker import check_file, CheckReport
+
+    from .checker import CheckReport, check_file
     from .config import get_check_overrides, get_site_base_url
 
     # Determine which files to check
@@ -3567,7 +3620,7 @@ def skill_install(local: bool):
     By default, installs to ~/.claude/skills/crier/ (global).
     Use --local to install to .claude/skills/crier/ (repo-local).
     """
-    from .skill import install, is_installed, get_skill_path, get_skill_content
+    from .skill import get_skill_content, get_skill_path, install, is_installed
 
     location = "local" if local else "global"
     status = is_installed()
@@ -3610,7 +3663,7 @@ def skill_uninstall(local: bool):
 @skill.command(name="status")
 def skill_status():
     """Check if the crier skill is installed and up-to-date."""
-    from .skill import is_installed, get_skill_path, get_skill_content
+    from .skill import get_skill_content, get_skill_path, is_installed
 
     status = is_installed()
     current_content = get_skill_content()
@@ -3788,7 +3841,7 @@ def link(file: str, url: str | None):
             console.print("[dim]Provide --url or add canonical_url to your file's YAML front matter.[/dim]")
             raise SystemExit(1)
 
-    from .registry import get_or_create_slug, get_article, find_slug, update_article_metadata
+    from .registry import find_slug, get_article, get_or_create_slug, update_article_metadata
 
     # Check if entry already exists
     existing_slug = find_slug(canonical_url=url)
@@ -3849,6 +3902,7 @@ def schedule_list(status: str | None, json_output: bool):
     Shows all scheduled posts, optionally filtered by status.
     """
     import json as json_module
+
     from .scheduler import list_scheduled_posts
 
     posts = list_scheduled_posts(status=status)
@@ -3906,6 +3960,7 @@ def schedule_list(status: str | None, json_output: bool):
 def schedule_show(post_id: str, json_output: bool):
     """Show details of a scheduled post."""
     import json as json_module
+
     from .scheduler import get_scheduled_post
 
     post = get_scheduled_post(post_id)
@@ -3954,6 +4009,7 @@ def schedule_cancel(post_id: str, json_output: bool):
     Only pending posts can be cancelled.
     """
     import json as json_module
+
     from .scheduler import cancel_scheduled_post, get_scheduled_post
 
     post = get_scheduled_post(post_id)
@@ -4002,9 +4058,8 @@ def schedule_run(dry_run: bool, json_output: bool):
         */5 * * * * cd /path/to/project && crier schedule run
     """
     import json as json_module
-    from .scheduler import get_due_posts, claim_due_posts, update_scheduled_post
-    from .converters import parse_markdown_file
-    from .platforms import get_platform, PLATFORMS
+
+    from .scheduler import claim_due_posts, get_due_posts, update_scheduled_post
 
     if dry_run:
         # Preview only: no claim, no mutation
@@ -4050,7 +4105,10 @@ def schedule_run(dry_run: bool, json_output: bool):
     fail_count = 0
 
     from .publishing import (
-        PublishRequest, RewriteOptions, ThreadOptions, publish_and_record,
+        PublishRequest,
+        RewriteOptions,
+        ThreadOptions,
+        publish_and_record,
     )
     from .scheduler import resolve_scheduled_source
 
@@ -4078,6 +4136,7 @@ def schedule_run(dry_run: bool, json_output: bool):
         item = {"id": post.id, "success": success, "platform": post.platform}
         if outcome is not None:
             item["url"] = outcome.url
+            item["article_id"] = outcome.article_id
             if outcome.thread_ids:
                 item["thread_ids"] = outcome.thread_ids
             if outcome.recording_error:
@@ -4276,6 +4335,7 @@ def delete(file: str, platform_args: tuple[str, ...], delete_all: bool,
         crier delete article.md --all --dry-run
     """
     import json as json_module
+
     from .registry import record_deletion
 
     # Batch mode implies --yes and JSON output
@@ -4530,7 +4590,8 @@ def archive(file: str, json_output: bool):
         crier archive article.md
     """
     import json as json_module
-    from .registry import set_archived, is_archived
+
+    from .registry import is_archived, set_archived
 
     article = parse_markdown_file(file)
 
@@ -4581,7 +4642,8 @@ def unarchive(file: str, json_output: bool):
         crier unarchive article.md
     """
     import json as json_module
-    from .registry import set_archived, is_archived
+
+    from .registry import is_archived, set_archived
 
     article = parse_markdown_file(file)
 
@@ -4650,14 +4712,15 @@ def stats(file: str | None, platforms: tuple[str, ...], refresh: bool,
         crier stats --platform devto --json
     """
     import json as json_module
+
+    from .platforms import get_platform
     from .registry import (
         get_all_articles,
         get_article_by_file,
         get_cached_stats,
-        save_stats,
         get_stats_age_seconds,
+        save_stats,
     )
-    from .platforms import get_platform
 
     # Parse --since filter
     since_date = None
@@ -5107,6 +5170,7 @@ def summary(json_output):
     articles with no platform publications.
     """
     import json as json_mod
+
     from .registry import load_registry
 
     registry = load_registry()

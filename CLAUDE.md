@@ -570,6 +570,34 @@ checks:
   short-body: disabled      # Allow short posts
 ```
 
+## Shared Publishing Core
+
+`publishing.py` owns automated API publishing through typed `PublishRequest`,
+`RewriteOptions`, and `ThreadOptions` inputs. `prepare_request` reads source/config
+and may call an LLM, but never publishes or records. It accepts an optional
+`source_article` snapshot for callers that already parsed content. `execute_plan`
+uses that prepared article without rereading it. `record_outcome` owns success,
+thread, and failure recording, including articles without canonical URLs.
+`publish_and_record` composes the stages. `publish_one` remains an execution-only
+compatibility API: it does not write the registry.
+
+`PublishOutcome` retains the actual adapter result and thread IDs. Its `success`
+includes recording success; `remote_success` distinguishes a successful remote
+write whose local recording failed. Do not convert outcomes into synthetic
+classes or record them again in an API caller. Keep manual/import confirmation
+in the CLI. For scheduled recording errors after remote success, retain terminal
+published state and report the error. Campaigns use `published_unrecorded` to
+prevent resending an untracked successful post.
+
+`Platform.list_articles_snapshot()` defaults to an incomplete `ArticleListing`
+for legacy adapters. Only an adapter that exhausted pagination successfully may
+report `complete=True`; an error or short page is not completeness evidence.
+Reconciliation reports unmatched entries as `unverified` and never deletes them
+unless the listing is explicitly complete.
+
+Test HTTP is blocked by the `prevent_live_http` fixture. Mock remote responses or
+use the in-memory adapter fixture; never depend on real publishing services.
+
 ## Non-Obvious Conventions
 
 These conventions are not visible from reading any single file. Violating them will cause regressions.
@@ -599,7 +627,7 @@ These conventions are not visible from reading any single file. Violating them w
 3. Implement required methods: `publish`, `update`, `list_articles`, `get_article`
 4. Use `self.retry_request(method, url, **kwargs)` instead of direct `requests.*()` calls
 5. Optionally implement: `delete` → `DeleteResult`, `get_stats` → `ArticleStats`, `publish_thread` → `ThreadPublishResult`
-6. Register in `platforms/__init__.py` by adding to `PLATFORMS` dict
+6. Built-in adapters are auto-discovered; do not add a parallel registration mapping
 7. Update README.md with API key format
 
 ### Adding a Mastodon-API-Compatible Server (Pleroma, Akkoma, GoToSocial, ...)

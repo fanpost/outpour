@@ -645,6 +645,26 @@ crier config set twitter.api_key manual
 3. Copy the webhook URL
 4. Use the full URL as the API key
 
+## Publishing reliability
+
+API publishing shares preparation, execution, and registry recording across the
+CLI, MCP, campaigns, audit/retry, and scheduled dispatch. Articles without a
+canonical URL can be tracked using their source file and title-derived identity.
+
+`crier reconcile --apply` backfills observed remote posts. It only marks a
+publication deleted when the adapter explicitly reports a complete listing;
+limited or legacy listings report unmatched entries as `unverified`. Increasing
+`--limit` alone does not establish completeness.
+
+New schedules store absolute source paths. Legacy relative paths resolve from
+`site_root` (or the schedule's project directory), not the runner's working
+directory. Correct old paths if their original creation directory differed.
+
+If a remote publish succeeds but registry recording fails, results include the
+remote ID/URL and `remote_published: true` where available. Reconcile the remote
+post before retrying. Schedules remain terminal `published` with an error;
+campaign cells become `published_unrecorded` and subsequent runs skip them.
+
 ## Custom Platforms
 
 Extend crier with your own platforms by dropping a `.py` file in `~/.config/crier/platforms/`:

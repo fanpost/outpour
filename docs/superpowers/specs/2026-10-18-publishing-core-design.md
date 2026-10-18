@@ -1,7 +1,7 @@
 # Publishing Repairs and Shared Core
 
-Status: proposed for review. Implementation follows approval of this specification
-and its implementation plan.
+Status: approved by the user. Implementation follows review of the implementation
+plan and selection of its execution method.
 
 ## Outcome and scope
 

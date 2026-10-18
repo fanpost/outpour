@@ -192,7 +192,7 @@ def test_publish_one_platform_exception_wrapped(mode, key, parse, get_plat):
 
 
 def test_prepared_plan_executes_snapshot_and_records_once(recording_platform, tmp_path, monkeypatch):
-    from crier.publishing import PublishRequest, prepare_request, execute_plan, record_outcome
+    from crier.publishing import PublishRequest, execute_plan, prepare_request, record_outcome
     from crier.registry import get_all_articles, get_connection
     md = tmp_path / 'post.md'
     md.write_text('---\ntitle: Snapshot\ntags: [original]\n---\nOriginal body.')
@@ -236,7 +236,7 @@ def test_recording_failure_retains_remote_success(recording_platform, tmp_path, 
 
 def test_service_preserves_thread_ids_and_rewrite_author(recording_platform, tmp_path):
     from crier.publishing import PublishRequest, RewriteOptions, ThreadOptions, publish_and_record
-    from crier.registry import get_thread_ids, get_connection
+    from crier.registry import get_connection, get_thread_ids
     md = tmp_path / 'thread.md'
     md.write_text('---\ntitle: Thread\n---\nBody.')
     outcome = publish_and_record(PublishRequest(md, 'test_platform',
@@ -250,8 +250,8 @@ def test_service_preserves_thread_ids_and_rewrite_author(recording_platform, tmp
 
 
 def test_partial_thread_retains_remote_ids(recording_platform, tmp_path, monkeypatch):
-    from crier.publishing import PublishRequest, ThreadOptions, publish_and_record
     from crier.platforms.base import ThreadPublishResult
+    from crier.publishing import PublishRequest, ThreadOptions, publish_and_record
     md = tmp_path / 'partial.md'
     md.write_text('---\ntitle: Partial\n---\n' + 'First sentence. ' * 40)
     monkeypatch.setattr(recording_platform, 'publish_thread', lambda self, posts:
@@ -264,8 +264,8 @@ def test_partial_thread_retains_remote_ids(recording_platform, tmp_path, monkeyp
 
 
 def test_auto_rewrite_runs_once_and_preserves_explicit_attribution(recording_platform, tmp_path):
-    from crier.publishing import PublishRequest, RewriteOptions, publish_and_record
     from crier.llm.provider import RewriteResult
+    from crier.publishing import PublishRequest, RewriteOptions, publish_and_record
     md = tmp_path / 'auto.md'
     md.write_text('---\ntitle: Auto\n---\n' + 'Long body. ' * 100)
     provider = MagicMock()
@@ -277,3 +277,52 @@ def test_auto_rewrite_runs_once_and_preserves_explicit_attribution(recording_pla
     assert recording_platform.articles[0].body == 'Short text.'
     assert outcome.rewrite_author == 'Alex'
     assert provider.rewrite.call_count == 1
+
+
+def test_explicit_zero_retry_and_false_truncate_override_defaults(recording_platform, tmp_path, monkeypatch):
+    from crier.llm.provider import RewriteResult
+    from crier.publishing import PublishRequest, RewriteOptions, publish_and_record
+    monkeypatch.setattr('crier.config.get_llm_retry_count', lambda: 3)
+    monkeypatch.setattr('crier.config.get_llm_truncate_fallback', lambda: True)
+    md = tmp_path / 'overrides.md'
+    md.write_text('---\ntitle: Overrides\n---\n' + 'Long. ' * 100)
+    provider = MagicMock()
+    provider.model = 'unit'
+    provider.rewrite.return_value = RewriteResult('x' * 150, 'unit')
+    outcome = publish_and_record(PublishRequest(md, 'test_platform', rewrite=RewriteOptions(
+        auto=True, provider=provider, retry_count=0, truncate=False)))
+    assert not outcome.success
+    assert 'too long' in outcome.error
+    assert provider.rewrite.call_count == 1
+    assert not recording_platform.articles
+
+
+def test_auto_rewrite_without_provider_fails_before_publishing(recording_platform, tmp_path, monkeypatch):
+    from crier.publishing import PublishRequest, RewriteOptions, publish_and_record
+    monkeypatch.setattr('crier.config.is_llm_configured', lambda: False)
+    md = tmp_path / 'missing-provider.md'
+    md.write_text('---\ntitle: Provider\n---\nBody.')
+    outcome = publish_and_record(PublishRequest(md, 'test_platform', rewrite=RewriteOptions(auto=True)))
+    assert not outcome.success
+    assert 'no LLM' in outcome.error
+    assert not recording_platform.articles
+
+
+def test_failed_outcome_is_recorded_only_once(recording_platform, tmp_path, monkeypatch):
+    from crier import registry
+    from crier.publishing import PublishRequest, execute_plan, prepare_request, record_outcome
+    recording_platform.failure = 'remote failed'
+    md = tmp_path / 'failure.md'
+    md.write_text('---\ntitle: Failure\n---\nBody.')
+    calls = []
+    original = registry.record_failure
+    def record(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+    monkeypatch.setattr(registry, 'record_failure', record)
+    outcome = execute_plan(prepare_request(PublishRequest(md, 'test_platform')))
+    record_outcome(outcome)
+    record_outcome(outcome)
+    assert not outcome.success
+    assert registry.get_failures()[0]['error'] == 'remote failed'
+    assert len(calls) == 1

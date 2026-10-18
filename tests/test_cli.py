@@ -1,12 +1,13 @@
 """Tests for crier CLI commands."""
 
+from unittest.mock import Mock, patch
+
 import pytest
 import yaml
 from click.testing import CliRunner
-from unittest.mock import Mock, patch
 
-from crier.cli import cli
 from crier import __version__
+from crier.cli import cli
 
 
 @pytest.fixture
@@ -1493,8 +1494,9 @@ class TestPlatformTypoSuggestion:
 
     def test_typo_suggestion(self):
         """Unknown platform suggests closest match."""
-        from crier.platforms import get_platform
         import pytest
+
+        from crier.platforms import get_platform
 
         with pytest.raises(ValueError) as exc_info:
             get_platform("devtoo")
@@ -1505,8 +1507,9 @@ class TestPlatformTypoSuggestion:
 
     def test_no_suggestion_for_gibberish(self):
         """No suggestion for completely unrelated names."""
-        from crier.platforms import get_platform
         import pytest
+
+        from crier.platforms import get_platform
 
         with pytest.raises(ValueError) as exc_info:
             get_platform("xyzabc123")
@@ -1707,7 +1710,7 @@ class TestArchiveCommand:
 
     def test_archive_success(self, runner, mock_config_and_registry):
         """Archive succeeds for tracked file."""
-        from crier.registry import record_publication, is_archived
+        from crier.registry import is_archived, record_publication
 
         posts_dir = mock_config_and_registry["posts_dir"]
         md_file = posts_dir / "test.md"
@@ -1784,7 +1787,7 @@ class TestUnarchiveCommand:
 
     def test_unarchive_success(self, runner, mock_config_and_registry):
         """Unarchive restores archived file."""
-        from crier.registry import record_publication, set_archived, is_archived
+        from crier.registry import is_archived, record_publication, set_archived
 
         posts_dir = mock_config_and_registry["posts_dir"]
         md_file = posts_dir / "test.md"
@@ -1883,8 +1886,8 @@ class TestDeleteCommandEdgeCases:
 
     def test_delete_from_platform_success(self, runner, mock_config_and_registry):
         """Delete from specific platform succeeds."""
-        from crier.registry import record_publication
         from crier.platforms.base import DeleteResult
+        from crier.registry import record_publication
 
         posts_dir = mock_config_and_registry["posts_dir"]
         md_file = posts_dir / "test.md"
@@ -1945,8 +1948,9 @@ class TestDeleteCommandEdgeCases:
     def test_delete_json_success(self, runner, mock_config_and_registry):
         """Delete with --json outputs proper JSON on success."""
         import json
-        from crier.registry import record_publication
+
         from crier.platforms.base import DeleteResult
+        from crier.registry import record_publication
 
         posts_dir = mock_config_and_registry["posts_dir"]
         md_file = posts_dir / "test.md"
@@ -2018,7 +2022,7 @@ class TestDeleteCommandEdgeCases:
 
     def test_delete_already_deleted_all(self, runner, mock_config_and_registry):
         """Delete --all when all platforms already deleted."""
-        from crier.registry import record_publication, record_deletion
+        from crier.registry import record_deletion, record_publication
 
         posts_dir = mock_config_and_registry["posts_dir"]
         md_file = posts_dir / "test.md"
@@ -2045,6 +2049,7 @@ class TestArchiveCommandEdgeCases:
     def test_archive_json_output(self, runner, mock_config_and_registry):
         """Archive with --json outputs machine-readable result."""
         import json
+
         from crier.registry import record_publication
 
         posts_dir = mock_config_and_registry["posts_dir"]
@@ -2068,6 +2073,7 @@ class TestArchiveCommandEdgeCases:
     def test_unarchive_json_output(self, runner, mock_config_and_registry):
         """Unarchive with --json outputs machine-readable result."""
         import json
+
         from crier.registry import record_publication, set_archived
 
         posts_dir = mock_config_and_registry["posts_dir"]
@@ -2151,6 +2157,7 @@ class TestScheduleCommands:
         """
         from datetime import datetime, timedelta, timezone
         from unittest.mock import patch
+
         from crier.platforms.base import PublishResult
         from crier.scheduler import create_scheduled_post
 
@@ -2196,7 +2203,7 @@ class TestStatusDeletedArticle:
 
     def test_status_shows_deleted_platform(self, runner, mock_config_and_registry):
         """Status shows deleted status for deleted publications."""
-        from crier.registry import record_publication, record_deletion
+        from crier.registry import record_deletion, record_publication
 
         posts_dir = mock_config_and_registry["posts_dir"]
         md_file = posts_dir / "test.md"
@@ -2290,7 +2297,7 @@ class TestRegistryDeletionIntegration:
 
     def test_delete_and_check_status_workflow(self, runner, mock_config_and_registry):
         """Full workflow: publish -> delete -> status shows deleted."""
-        from crier.registry import record_publication, record_deletion, is_deleted
+        from crier.registry import is_deleted, record_deletion, record_publication
 
         posts_dir = mock_config_and_registry["posts_dir"]
         md_file = posts_dir / "test.md"
@@ -3061,7 +3068,7 @@ class TestLinkCommand:
 
     def test_link_existing_entry(self, runner, mock_config_and_registry):
         """Link a content file to an existing registry entry."""
-        from crier.registry import record_publication, get_article
+        from crier.registry import get_article, record_publication
 
         canonical = "https://example.com/post/my-article/"
         record_publication(
@@ -3413,6 +3420,7 @@ class TestScheduleRunAutoRewrite:
         never publish the unrewritten body."""
         from datetime import datetime, timedelta, timezone
         from unittest.mock import patch
+
         from crier.scheduler import create_scheduled_post, load_schedule
 
         # Hermetic: the host may have a real key in the environment, which
@@ -3456,6 +3464,7 @@ class TestScheduleRunResilience:
         post failed and the loop continues to the next post."""
         from datetime import datetime, timedelta, timezone
         from unittest.mock import patch
+
         from crier.platforms.base import PublishResult
         from crier.scheduler import create_scheduled_post, load_schedule
 
@@ -3526,6 +3535,7 @@ class TestScheduleRunFullOptions:
     ):
         from datetime import datetime, timedelta, timezone
         from unittest.mock import patch
+
         from crier.platforms.base import ThreadPublishResult
         from crier.scheduler import create_scheduled_post, load_schedule
 
@@ -3551,7 +3561,7 @@ class TestScheduleRunFullOptions:
         assert len(posts_arg) > 1  # body actually split into a thread
         entry = load_schedule()["scheduled_posts"][0]
         assert entry["status"] == "published"
-        from crier.registry import is_thread, get_thread_ids, get_connection
+        from crier.registry import get_connection, get_thread_ids, is_thread
         key = "https://example.com/threaded/"
         assert is_thread(key, "bluesky")
         assert get_thread_ids(key, "bluesky") == ["t-1", "t-2"]
@@ -3567,6 +3577,7 @@ class TestScheduleRunFullOptions:
     ):
         from datetime import datetime, timedelta, timezone
         from unittest.mock import patch
+
         from crier.scheduler import create_scheduled_post, load_schedule
 
         md = self._mk(mock_config_and_registry["posts_dir"], "nothread")
@@ -3588,6 +3599,7 @@ class TestScheduleRunFullOptions:
     def test_run_honors_draft(self, runner, mock_config_and_registry):
         from datetime import datetime, timedelta, timezone
         from unittest.mock import patch
+
         from crier.platforms.base import PublishResult
         from crier.scheduler import create_scheduled_post, load_schedule
 
@@ -3613,6 +3625,7 @@ class TestScheduleRunFullOptions:
 
 def test_schedule_recording_error_does_not_republish(recording_platform, tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
+
     from crier.scheduler import create_scheduled_post, load_schedule
     md = tmp_path / 'scheduled.md'
     md.write_text('---\ntitle: Scheduled\n---\nBody.')

@@ -136,16 +136,18 @@ def prevent_live_http(monkeypatch):
 @pytest.fixture
 def recording_platform(tmp_registry, monkeypatch):
     """A real adapter contract with an in-memory remote, isolated from the registry."""
+    from dataclasses import replace
+    from typing import ClassVar
+
     from crier.platforms import PLATFORMS
     from crier.platforms.base import Platform, PublishResult, ThreadPublishResult
-    from dataclasses import replace
 
     class RecordingPlatform(Platform):
         name = 'test_platform'
         supports_threads = True
         max_content_length = 100
-        articles = []
-        threads = []
+        articles: ClassVar[list] = []
+        threads: ClassVar[list] = []
         failure = None
 
         def publish(self, article):

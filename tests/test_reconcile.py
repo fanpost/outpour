@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-from crier.platforms.base import ArticleListing
 
+from crier.platforms.base import ArticleListing
 from crier.reconcile import (
     ReconcileReport,
     match_live_to_registry,
@@ -266,7 +266,7 @@ def test_partial_listing_never_deletes_live_history(tmp_registry, monkeypatch):
 
 
 def test_complete_empty_listing_confirms_deletion(tmp_registry, monkeypatch):
-    from crier.registry import record_publication, is_deleted
+    from crier.registry import is_deleted, record_publication
     record_publication('https://site/gone', 'devto', 'gone', 'https://dev/gone', title='Gone')
     inst = MagicMock()
     inst.list_articles_snapshot.return_value = ArticleListing([], complete=True)

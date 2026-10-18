@@ -898,7 +898,7 @@ def test_cancellation_preserves_concurrent_schedule_mutations(tmp_schedule, oper
     import os
     if os.name != 'posix':
         pytest.skip('requires process-level POSIX schedule locking')
-    import crier.scheduler as scheduler
+    from crier import scheduler
 
     ctx = multiprocessing.get_context('fork')
     loaded, release, attempted, finished = [ctx.Event() for _ in range(4)]

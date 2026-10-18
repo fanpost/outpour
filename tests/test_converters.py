@@ -392,3 +392,15 @@ And an image: ![img](/img.png)
         body = "![img](data:image/png;base64,abc123)"
         result = resolve_relative_links(body, "https://example.com")
         assert result == "![img](data:image/png;base64,abc123)"
+
+
+def test_toml_preserves_comments_commas_and_multiline_strings():
+    from crier.converters.markdown import _parse_toml
+    parsed = _parse_toml('''published = false # keep draft
+tags = ["one, two", "three"]
+description = """first
+second"""
+''')
+    assert parsed['published'] is False
+    assert parsed['tags'] == ['one, two', 'three']
+    assert parsed['description'] == 'first\nsecond'

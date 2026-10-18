@@ -125,6 +125,15 @@ def get_schedule_path() -> Path:
     return root / ".crier" / "schedule.yaml"
 
 
+def resolve_scheduled_source(file_path: str | Path) -> Path:
+    """Resolve legacy relative sources against the schedule's project, never runner CWD."""
+    from .config import get_site_root
+    path = Path(file_path).expanduser()
+    if not path.is_absolute():
+        path = (get_site_root() or get_schedule_path().parent.parent) / path
+    return path.resolve()
+
+
 def load_schedule() -> dict[str, Any]:
     """Load the schedule from disk."""
     schedule_file = get_schedule_path()
@@ -238,7 +247,7 @@ def create_scheduled_post(
 
     post = ScheduledPost(
         id=str(uuid.uuid4())[:8],
-        file_path=str(file_path),
+        file_path=str(Path(file_path).expanduser().resolve()),
         platform=platform,
         scheduled_time=scheduled_time,
         created_at=datetime.now(timezone.utc),

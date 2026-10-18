@@ -3555,6 +3555,16 @@ class TestScheduleRunFullOptions:
         assert len(posts_arg) > 1  # body actually split into a thread
         entry = load_schedule()["scheduled_posts"][0]
         assert entry["status"] == "published"
+        from crier.registry import is_thread, get_thread_ids, get_connection
+        key = "https://example.com/threaded/"
+        assert is_thread(key, "bluesky")
+        assert get_thread_ids(key, "bluesky") == ["t-1", "t-2"]
+        import json
+        stored = get_connection().execute(
+            "SELECT thread_urls FROM publications WHERE platform_id = ?", ("t-1",)
+        ).fetchone()
+        assert json.loads(stored[0]) == [
+            "https://bsky.app/post/t-1", "https://bsky.app/post/t-2"]
 
     def test_run_fails_thread_on_unsupporting_platform(
         self, runner, mock_config_and_registry

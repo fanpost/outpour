@@ -4215,7 +4215,8 @@ def schedule_run(dry_run: bool, json_output: bool):
 
     for post in due_posts:
         # Check file exists
-        file_path = Path(post.file_path)
+        from .scheduler import resolve_scheduled_source
+        file_path = resolve_scheduled_source(post.file_path)
         if not file_path.exists():
             update_scheduled_post(post.id, status="failed", error="Source file not found")
             results.append({"id": post.id, "success": False, "error": "Source file not found"})
@@ -4349,6 +4350,7 @@ def schedule_run(dry_run: bool, json_output: bool):
                     f"{platform_name} does not support thread posting"
                 )
 
+            thread_result = None
             if post.thread:
                 from .threading import split_into_thread
 
@@ -4360,13 +4362,12 @@ def schedule_run(dry_run: bool, json_output: bool):
                 )
                 if len(thread_posts) > 1:
                     tr = platform.publish_thread(thread_posts)
-                    # Adapt to the PublishResult shape the code below reads
-                    result = type("Result", (), {
-                        "success": tr.success,
-                        "article_id": tr.root_id,
-                        "url": tr.root_url,
-                        "error": tr.error,
-                    })()
+                    from .platforms.base import PublishResult
+                    thread_result = tr
+                    result = PublishResult(
+                        success=tr.success, platform=platform_name,
+                        article_id=tr.root_id, url=tr.root_url, error=tr.error,
+                    )
                 else:
                     result = platform.publish(article)
             else:
@@ -4375,15 +4376,20 @@ def schedule_run(dry_run: bool, json_output: bool):
             if result.success:
                 update_scheduled_post(post.id, status="published")
 
-                # Record in registry
-                if article.canonical_url:
+                # Keep all remote IDs so later deletion can address the full thread.
+                if thread_result is not None:
+                    record_thread_publication(
+                        article.canonical_url, platform_name,
+                        thread_result.root_id, thread_result.root_url,
+                        thread_result.post_ids or [], thread_result.post_urls,
+                        title=article.title, source_file=str(file_path),
+                        rewritten=is_rewritten, rewrite_author=rewrite_author,
+                    )
+                else:
                     record_publication(
                         canonical_url=article.canonical_url,
-                        platform=platform_name,
-                        article_id=result.article_id,
-                        url=result.url,
-                        title=article.title,
-                        source_file=str(file_path),
+                        platform=platform_name, article_id=result.article_id,
+                        url=result.url, title=article.title, source_file=str(file_path),
                         rewritten=is_rewritten,
                         rewrite_author=rewrite_author if is_rewritten else None,
                         posted_content=posted_content if is_rewritten else None,

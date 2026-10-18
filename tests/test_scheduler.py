@@ -1,6 +1,7 @@
 """Tests for crier.scheduler module."""
 
 import pytest
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 from crier.scheduler import (
@@ -635,9 +636,9 @@ class TestListScheduledPostsEdgeCases:
 
         posts = list_scheduled_posts()
         assert len(posts) == 3
-        assert posts[0].file_path == "early.md"
-        assert posts[1].file_path == "mid.md"
-        assert posts[2].file_path == "late.md"
+        assert Path(posts[0].file_path).name == "early.md"
+        assert Path(posts[1].file_path).name == "mid.md"
+        assert Path(posts[2].file_path).name == "late.md"
 
     def test_list_with_status_no_matches(self, tmp_schedule):
         """Filtering by status with no matches returns empty list."""
@@ -687,7 +688,7 @@ class TestGetDuePostsEdgeCases:
 
         due = get_due_posts()
         assert len(due) == 1
-        assert due[0].file_path == "past.md"
+        assert Path(due[0].file_path).name == "past.md"
 
 
 class TestParseScheduleTimeEdgeCases:
@@ -837,7 +838,7 @@ class TestScheduleConcurrencySafety:
 
         reclaimed = claim_due_posts()
         assert len(reclaimed) == 1
-        assert reclaimed[0].file_path == "stale.md"
+        assert Path(reclaimed[0].file_path).name == "stale.md"
 
     def test_save_schedule_is_atomic_no_temp_leftover(self, tmp_schedule):
         """Saves go through an atomic replace and leave no temp files."""
@@ -949,3 +950,17 @@ def test_cancellation_preserves_concurrent_schedule_mutations(tmp_schedule, oper
             if proc.is_alive():
                 proc.terminate()
                 proc.join()
+
+
+def test_new_schedules_store_creation_directory(tmp_schedule, monkeypatch):
+    posts = tmp_schedule / 'posts'
+    posts.mkdir()
+    monkeypatch.chdir(posts)
+    post = create_scheduled_post('note.md', 'devto', datetime.now(timezone.utc))
+    assert post.file_path == str(posts / 'note.md')
+
+
+def test_legacy_schedule_sources_ignore_runner_directory(tmp_schedule, tmp_path, monkeypatch):
+    from crier.scheduler import resolve_scheduled_source
+    monkeypatch.chdir(tmp_path)
+    assert resolve_scheduled_source('posts/note.md') == tmp_schedule / 'posts/note.md'

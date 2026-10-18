@@ -28,7 +28,7 @@ from .config import (
 )
 from .converters import parse_markdown_file
 from .platforms import PLATFORMS
-from .registry import is_published, record_failure, record_publication
+from .registry import is_published
 from .utils import find_content_files
 
 
@@ -163,7 +163,7 @@ def run_campaign(
     if manifest is None:
         return CampaignRunSummary(name=name, error=f"Campaign not found: {name}")
 
-    from .publishing import publish_one
+    from .publishing import PublishRequest, RewriteOptions, publish_and_record
 
     summary = CampaignRunSummary(name=name, applied=apply)
     attempted = 0  # real publish attempts this run (for max_cells)
@@ -171,12 +171,11 @@ def run_campaign(
     for post in manifest.get("posts", []):
         canonical = post.get("canonical_url")
         file = post.get("file")
-        title = post.get("title")
         for platform, cell in post.get("targets", {}).items():
             if apply and max_cells is not None and attempted >= max_cells:
                 save_manifest(name, manifest)
                 return summary
-            if cell.get("status") == "published":
+            if cell.get("status") in ("published", "published_unrecorded"):
                 summary.skipped += 1
                 continue
 
@@ -202,33 +201,20 @@ def run_campaign(
                 summary.pending += 1
                 continue
 
-            outcome = publish_one(file, platform, rewrite_content=rewrite or None)
+            outcome = publish_and_record(PublishRequest(
+                Path(file), platform, rewrite=RewriteOptions(content=rewrite or None)))
             attempted += 1
-            result = outcome.result
-            if result.success:
-                if canonical:
-                    record_publication(
-                        canonical_url=canonical,
-                        platform=platform,
-                        article_id=result.article_id,
-                        url=result.url,
-                        title=title,
-                        source_file=file,
-                        rewritten=outcome.rewritten,
-                        posted_content=outcome.posted_content,
-                    )
+            if outcome.success:
                 cell["status"] = "published"
-                cell["url"] = result.url
+                cell["url"] = outcome.url
                 cell.pop("error", None)
                 summary.published += 1
             else:
-                if canonical:
-                    record_failure(
-                        canonical, platform, result.error or "unknown error",
-                        title, file,
-                    )
-                cell["status"] = "failed"
-                cell["error"] = result.error
+                cell["status"] = "published_unrecorded" if outcome.remote_success else "failed"
+                cell["error"] = outcome.error
+                if outcome.remote_success:
+                    cell["url"] = outcome.url
+                    cell["article_id"] = outcome.article_id
                 summary.failed += 1
 
     if apply:

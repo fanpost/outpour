@@ -163,24 +163,17 @@ def test_run_dry_run_makes_no_publish_or_writes(site, monkeypatch):
     assert load_manifest("c")["posts"][0]["targets"]["devto"]["status"] == "pending"
 
 
-def test_run_apply_publishes_records_and_writes(site, monkeypatch):
-    save_manifest("c", _manifest({"devto": {"status": "pending"}}))
-    monkeypatch.setattr(camp, "is_short_form_platform", lambda p: False)
-    rec = {}
-    monkeypatch.setattr(
-        camp, "record_publication",
-        lambda **kw: rec.update(kw),
-    )
-    monkeypatch.setattr("crier.publishing.publish_one", lambda f, p, **kw: _outcome())
-
-    summary = run_campaign("c", apply=True)
+def test_run_apply_publishes_records_and_writes(site, recording_platform):
+    from crier.registry import get_publication_id
+    md = site / 'foo.md'
+    md.write_text('---\ntitle: Foo\ncanonical_url: https://x/foo/\n---\nBody.')
+    manifest = _manifest({'test_platform': {'status': 'pending'}})
+    manifest['posts'][0]['file'] = str(md)
+    save_manifest('c', manifest)
+    summary = run_campaign('c', apply=True)
     assert summary.published == 1
-    assert rec["platform"] == "devto"
-    assert rec["canonical_url"] == "https://x/foo/"
-    # status written back to disk
-    cell = load_manifest("c")["posts"][0]["targets"]["devto"]
-    assert cell["status"] == "published"
-    assert cell["url"] == "https://dev/1"
+    assert get_publication_id('https://x/foo/', 'test_platform') == 'remote-1'
+    assert load_manifest('c')['posts'][0]['targets']['test_platform']['status'] == 'published'
 
 
 def test_run_resumes_skipping_published(site, monkeypatch):
@@ -229,37 +222,31 @@ def test_run_short_form_with_rewrite_publishes(site, monkeypatch):
         "c", _manifest({"bluesky": {"status": "pending", "rewrite": "short take"}})
     )
     monkeypatch.setattr(camp, "is_short_form_platform", lambda p: True)
-    monkeypatch.setattr(camp, "record_publication", lambda **kw: None)
+    monkeypatch.setattr("crier.registry.record_publication", lambda **kw: None)
     seen = {}
 
-    def fake_publish_one(f, p, **kw):
-        seen["rewrite_content"] = kw.get("rewrite_content")
+    def fake_publish_one(request, **kw):
+        seen["rewrite_content"] = request.rewrite.content
         return _outcome()
 
-    monkeypatch.setattr("crier.publishing.publish_one", fake_publish_one)
+    monkeypatch.setattr("crier.publishing.publish_and_record", fake_publish_one)
     summary = run_campaign("c", apply=True)
     assert summary.published == 1
     assert seen["rewrite_content"] == "short take"
 
 
-def test_run_records_failure(site, monkeypatch):
-    save_manifest("c", _manifest({"devto": {"status": "pending"}}))
-    monkeypatch.setattr(camp, "is_short_form_platform", lambda p: False)
-    fails = {}
-    monkeypatch.setattr(
-        camp, "record_failure",
-        lambda *a, **k: fails.update({"called": True, "args": a}),
-    )
-    monkeypatch.setattr(
-        "crier.publishing.publish_one",
-        lambda f, p, **kw: _outcome(success=False, error="boom"),
-    )
-    summary = run_campaign("c", apply=True)
+def test_run_records_failure(site, recording_platform):
+    from crier.registry import get_failures
+    recording_platform.failure = 'boom'
+    md = site / 'foo.md'
+    md.write_text('---\ntitle: Foo\ncanonical_url: https://x/foo/\n---\nBody.')
+    manifest = _manifest({'test_platform': {'status': 'pending'}})
+    manifest['posts'][0]['file'] = str(md)
+    save_manifest('c', manifest)
+    summary = run_campaign('c', apply=True)
     assert summary.failed == 1
-    assert fails["called"] is True
-    cell = load_manifest("c")["posts"][0]["targets"]["devto"]
-    assert cell["status"] == "failed"
-    assert cell["error"] == "boom"
+    assert get_failures()[0]['error'] == 'boom'
+    assert load_manifest('c')['posts'][0]['targets']['test_platform']['status'] == 'failed'
 
 
 def test_run_dry_run_needs_rewrite_not_persisted(site, monkeypatch):
@@ -281,14 +268,14 @@ def test_run_failed_cell_is_retried(site, monkeypatch):
     """A cell left in 'failed' status is re-attempted on the next run."""
     save_manifest("c", _manifest({"devto": {"status": "failed", "error": "old"}}))
     monkeypatch.setattr(camp, "is_short_form_platform", lambda p: False)
-    monkeypatch.setattr(camp, "record_publication", lambda **kw: None)
+    monkeypatch.setattr("crier.registry.record_publication", lambda **kw: None)
     calls = {"n": 0}
 
-    def fake_publish_one(f, p, **kw):
+    def fake_publish_one(request, **kw):
         calls["n"] += 1
         return _outcome()
 
-    monkeypatch.setattr("crier.publishing.publish_one", fake_publish_one)
+    monkeypatch.setattr("crier.publishing.publish_and_record", fake_publish_one)
     summary = run_campaign("c", apply=True)
     assert calls["n"] == 1
     assert summary.published == 1
@@ -308,8 +295,8 @@ def test_run_multi_cell_mixed_outcomes(site, monkeypatch):
         ),
     )
     monkeypatch.setattr(camp, "is_short_form_platform", lambda p: p == "bluesky")
-    monkeypatch.setattr(camp, "record_publication", lambda **kw: None)
-    monkeypatch.setattr("crier.publishing.publish_one", lambda f, p, **kw: _outcome())
+    monkeypatch.setattr("crier.registry.record_publication", lambda **kw: None)
+    monkeypatch.setattr("crier.publishing.publish_and_record", lambda request, **kw: _outcome())
 
     summary = run_campaign("c", apply=True)
     assert summary.skipped == 1
@@ -330,14 +317,14 @@ def test_run_max_cells_caps_publishes(site, monkeypatch):
     }
     save_manifest("c", manifest)
     monkeypatch.setattr(camp, "is_short_form_platform", lambda p: False)
-    monkeypatch.setattr(camp, "record_publication", lambda **kw: None)
+    monkeypatch.setattr("crier.registry.record_publication", lambda **kw: None)
     calls = {"n": 0}
 
-    def fake_publish_one(f, p, **kw):
+    def fake_publish_one(request, **kw):
         calls["n"] += 1
         return _outcome()
 
-    monkeypatch.setattr("crier.publishing.publish_one", fake_publish_one)
+    monkeypatch.setattr("crier.publishing.publish_and_record", fake_publish_one)
     summary = run_campaign("c", apply=True, max_cells=2)
     assert summary.published == 2
     assert calls["n"] == 2
@@ -352,9 +339,25 @@ def _spy_publish_one(monkeypatch_ctx):
     """Install a publish_one spy that must never be called; returns a counter."""
     state = {"calls": 0}
 
-    def spy(f, p, **kw):
+    def spy(request, **kw):
         state["calls"] += 1
         return _outcome()
 
-    monkeypatch_ctx.setattr("crier.publishing.publish_one", spy)
+    monkeypatch_ctx.setattr("crier.publishing.publish_and_record", spy)
     return state
+
+
+def test_campaign_recording_error_is_terminal(site, recording_platform, monkeypatch):
+    md = site / 'real.md'
+    md.write_text('---\ntitle: Real\ncanonical_url: https://site/real\n---\nBody.')
+    manifest = _manifest({'test_platform': {'status': 'pending'}})
+    manifest['posts'][0].update(file=str(md), canonical_url='https://site/real', title='Real')
+    save_manifest('c', manifest)
+    def broken(**kw):
+        raise RuntimeError('registry unavailable')
+    monkeypatch.setattr('crier.registry.record_publication', broken)
+    first = run_campaign('c', apply=True)
+    assert first.failed == 1
+    assert load_manifest('c')['posts'][0]['targets']['test_platform']['status'] == 'published_unrecorded'
+    run_campaign('c', apply=True)
+    assert len(recording_platform.articles) == 1

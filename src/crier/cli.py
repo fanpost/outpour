@@ -2662,7 +2662,7 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                     })
                     continue
 
-                from .publishing import publish_one
+                from .publishing import PublishRequest, publish_and_record
 
                 if not silent:
                     console.print(
@@ -2670,18 +2670,10 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                         f" for {Path(source_file).name}...[/dim]"
                     )
 
-                outcome = publish_one(source_file, platform_name)
-                result = outcome.result
+                outcome = publish_and_record(PublishRequest(Path(source_file), platform_name))
+                result = outcome
 
                 if result.success:
-                    record_publication(
-                        canonical_url=canonical_url,
-                        platform=platform_name,
-                        article_id=result.article_id,
-                        url=result.url,
-                        title=outcome.article.title if outcome.article else None,
-                        source_file=source_file,
-                    )
                     retry_results.append({
                         "platform": platform_name,
                         "canonical_url": canonical_url,
@@ -2694,18 +2686,12 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                             f" {result.url or 'published'}[/green]"
                         )
                 else:
-                    record_failure(
-                        canonical_url=canonical_url,
-                        platform=platform_name,
-                        error_msg=result.error or "Unknown error",
-                        title=outcome.article.title if outcome.article else None,
-                        source_file=source_file,
-                    )
                     retry_results.append({
                         "platform": platform_name,
                         "canonical_url": canonical_url,
                         "success": False,
                         "error": result.error,
+                        "remote_published": outcome.remote_success,
                     })
                     if not silent:
                         console.print(
@@ -3148,20 +3134,16 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
 
         try:
             if action == "publish":
-                from .publishing import publish_one
+                from .publishing import PublishRequest, RewriteOptions, publish_and_record
 
                 if not silent:
                     console.print(f"[dim]Publishing {title[:30]} → {platform}...[/dim]")
-                outcome = publish_one(
-                    str(file_path), platform,
-                    auto_rewrite=auto_rewrite,
-                    llm_provider=llm_provider,
-                    auto_rewrite_retry=auto_rewrite_retry or 0,
-                    auto_rewrite_truncate=bool(auto_rewrite_truncate),
-                    silent=silent,
-                    console=console,
-                )
-                result = outcome.result
+                outcome = publish_and_record(PublishRequest(
+                    Path(file_path), platform, rewrite=RewriteOptions(
+                        auto=auto_rewrite, provider=llm_provider,
+                        retry_count=auto_rewrite_retry, truncate=auto_rewrite_truncate)),
+                    silent=silent, console=console)
+                result = outcome
                 rewritten = outcome.rewritten
                 rewrite_content = outcome.posted_content
                 action_verb = "Published"
@@ -3232,17 +3214,18 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                         f"[green]✓ {title[:30]}"
                         f" → {platform} ({verb})[/green]"
                     )
-                record_publication(
-                    canonical_url=article.canonical_url,
-                    platform=platform,
-                    article_id=result.article_id,
-                    url=result.url,
-                    title=article.title,
-                    source_file=str(file_path),
-                    rewritten=rewritten,
-                    rewrite_author=get_rewrite_author() if rewritten else None,
-                    posted_content=rewrite_content if rewritten else None,
-                )
+                if action != "publish":
+                    record_publication(
+                        canonical_url=article.canonical_url,
+                        platform=platform,
+                        article_id=result.article_id,
+                        url=result.url,
+                        title=article.title,
+                        source_file=str(file_path),
+                        rewritten=rewritten,
+                        rewrite_author=get_rewrite_author() if rewritten else None,
+                        posted_content=rewrite_content if rewritten else None,
+                    )
                 publish_results.append({
                     "file": str(file_path),
                     "platform": platform,

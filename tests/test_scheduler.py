@@ -889,3 +889,63 @@ class TestScheduledPostRobustness:
         due = get_due_posts()
         assert len(due) == 1
         assert due[0].rewrite_author == "claude-code"
+
+
+@pytest.mark.parametrize('operation', ['claim', 'create'])
+def test_cancellation_preserves_concurrent_schedule_mutations(tmp_schedule, operation):
+    import multiprocessing
+    import os
+    if os.name != 'posix':
+        pytest.skip('requires process-level POSIX schedule locking')
+    import crier.scheduler as scheduler
+
+    ctx = multiprocessing.get_context('fork')
+    loaded, release, attempted, finished = [ctx.Event() for _ in range(4)]
+    past = datetime.now(timezone.utc) - timedelta(minutes=1)
+    first = create_scheduled_post('a.md', 'devto', past)
+    second = create_scheduled_post('b.md', 'devto', past)
+
+    def cancel():
+        original = scheduler.load_schedule
+        def paused_load():
+            data = original()
+            loaded.set()
+            assert release.wait(5)
+            return data
+        scheduler.load_schedule = paused_load
+        scheduler.cancel_scheduled_post(first.id)
+
+    def mutate():
+        attempted.set()
+        if operation == 'claim':
+            scheduler.claim_due_posts()
+        else:
+            scheduler.create_scheduled_post('c.md', 'devto', past)
+        finished.set()
+
+    canceller = ctx.Process(target=cancel)
+    worker = ctx.Process(target=mutate)
+    try:
+        canceller.start()
+        assert loaded.wait(5)
+        worker.start()
+        assert attempted.wait(5)
+        # An unlocked mutator completes now; a locked one waits for cancellation.
+        finished.wait(0.2)
+        release.set()
+        canceller.join(5)
+        worker.join(5)
+        assert canceller.exitcode == worker.exitcode == 0
+        entries = load_schedule()['scheduled_posts']
+        assert entries[0]['status'] == 'cancelled'
+        if operation == 'claim':
+            assert scheduler.get_scheduled_post(second.id).status == 'publishing'
+            assert scheduler.claim_due_posts() == []
+        else:
+            assert len(entries) == 3
+    finally:
+        release.set()
+        for proc in (canceller, worker):
+            if proc.is_alive():
+                proc.terminate()
+                proc.join()

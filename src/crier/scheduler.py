@@ -405,17 +405,18 @@ def cancel_scheduled_post(post_id: str) -> bool:
     Returns:
         True if cancelled, False if not found or not pending
     """
-    schedule = load_schedule()
+    with _schedule_lock():
+        schedule = load_schedule()
 
-    for post_data in schedule.get("scheduled_posts", []):
-        if post_data["id"] == post_id or post_data["id"].startswith(post_id):
-            if post_data["status"] != "pending":
-                return False
-            post_data["status"] = "cancelled"
-            save_schedule(schedule)
-            return True
+        for post_data in schedule.get("scheduled_posts", []):
+            if post_data["id"] == post_id or post_data["id"].startswith(post_id):
+                if post_data["status"] != "pending":
+                    return False
+                post_data["status"] = "cancelled"
+                save_schedule(schedule)
+                return True
 
-    return False
+        return False
 
 
 def delete_scheduled_post(post_id: str) -> bool:

@@ -2370,15 +2370,13 @@ canonical_url: https://example.com/test
 Content here.
 """)
 
-        with patch("crier.cli.record_failure") as mock_record_failure:
-            result = runner.invoke(cli, ["publish", str(test_file), "--to", "devto"])
-
+        result = runner.invoke(cli, ["publish", str(test_file), "--to", "devto"])
+        from crier.registry import get_failures
         assert result.exit_code == 1
-        mock_record_failure.assert_called_once()
-        call_kwargs = mock_record_failure.call_args
-        assert call_kwargs[1]["canonical_url"] == "https://example.com/test"
-        assert call_kwargs[1]["platform"] == "devto"
-        assert "Connection timeout" in call_kwargs[1]["error_msg"]
+        failure = get_failures()[0]
+        assert failure["canonical_url"] == "https://example.com/test"
+        assert failure["platform"] == "devto"
+        assert "Connection timeout" in failure["error"]
 
     @patch("crier.publishing.get_platform")
     def test_publish_records_failure_on_api_error(self, mock_get_platform, runner, mock_config_and_registry):
@@ -2405,14 +2403,12 @@ canonical_url: https://example.com/test
 Content here.
 """)
 
-        with patch("crier.cli.record_failure") as mock_record_failure:
-            runner.invoke(cli, ["publish", str(test_file), "--to", "devto"])
-
-        mock_record_failure.assert_called_once()
-        call_kwargs = mock_record_failure.call_args
-        assert call_kwargs[1]["canonical_url"] == "https://example.com/test"
-        assert call_kwargs[1]["platform"] == "devto"
-        assert "API error" in call_kwargs[1]["error_msg"]
+        runner.invoke(cli, ["publish", str(test_file), "--to", "devto"])
+        from crier.registry import get_failures
+        failure = get_failures()[0]
+        assert failure["canonical_url"] == "https://example.com/test"
+        assert failure["platform"] == "devto"
+        assert "API error" in failure["error"]
 
     @patch("crier.publishing.get_platform")
     def test_publish_partial_success_exit_code_2(self, mock_get_platform, runner, mock_config_and_registry):
@@ -3632,3 +3628,29 @@ def test_schedule_recording_error_does_not_republish(recording_platform, tmp_pat
     assert entry['error']
     CliRunner().invoke(cli, ['schedule', 'run', '--json'])
     assert len(recording_platform.articles) == 1
+
+
+def test_cli_noncanonical_publish_records_source(recording_platform, tmp_path):
+    from crier.registry import get_publication_id
+    md = tmp_path / 'immediate.md'
+    md.write_text('---\ntitle: Immediate\n---\nBody.')
+    result = CliRunner().invoke(cli, ['publish', str(md), '--to', 'test_platform', '--batch', '--no-check'])
+    assert result.exit_code == 0, result.output
+    assert get_publication_id('immediate', 'test_platform') == 'remote-1'
+
+
+def test_cli_api_execution_reads_source_once(recording_platform, tmp_path, monkeypatch):
+    from pathlib import Path
+    md = tmp_path / 'single-read.md'
+    md.write_text('---\ntitle: Single read\n---\nBody.')
+    reads = []
+    original = Path.read_text
+    def read(path, *args, **kwargs):
+        if path == md:
+            reads.append(path)
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', read)
+    result = CliRunner().invoke(cli, ['publish', str(md), '--to', 'test_platform', '--batch', '--no-check'])
+    assert result.exit_code == 0, result.output
+    assert len(reads) == 1
+    assert recording_platform.articles[0].title == 'Single read'

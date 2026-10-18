@@ -133,8 +133,17 @@ class PublishOutcome:
     def requires_confirmation(self) -> bool:
         return isinstance(self.result, PublishResult) and self.result.requires_confirmation
 
+    @property
+    def manual_content(self) -> str | None:
+        return self.result.manual_content if isinstance(self.result, PublishResult) else None
 
-def prepare_request(request: PublishRequest, *, silent: bool = True, console=None) -> PublishPlan:
+    @property
+    def compose_url(self) -> str | None:
+        return self.result.compose_url if isinstance(self.result, PublishResult) else None
+
+
+def prepare_request(request: PublishRequest, *, source_article: Article | None = None,
+                    silent: bool = True, console=None) -> PublishPlan:
     """Read source/config and optionally rewrite; never publish or record."""
     request = replace(request, source_file=Path(request.source_file).expanduser().resolve())
     mode = get_platform_mode(request.platform)
@@ -147,7 +156,8 @@ def prepare_request(request: PublishRequest, *, silent: bool = True, console=Non
         plan.error = f"No API key configured for {request.platform}"
         return plan
     try:
-        article = parse_markdown_file(str(request.source_file))
+        article = (source_article if source_article is not None
+                   else parse_markdown_file(str(request.source_file)))
         article = replace(article, tags=list(article.tags) if article.tags is not None else None)
         plan.article = article
         if not article.title:
@@ -199,6 +209,12 @@ def prepare_request(request: PublishRequest, *, silent: bool = True, console=Non
                 plan.posted_content = rw.rewrite_text
                 if plan.rewrite_author is None:
                     plan.rewrite_author = f"llm:{provider.model}"
+        if (rewrite.content and not request.thread.enabled and not rewrite.auto
+                and plan.adapter.max_content_length
+                and len(plan.article.body) > plan.adapter.max_content_length):
+            plan.error = (f"Rewrite content too long: {len(plan.article.body)} chars "
+                          f"(limit: {plan.adapter.max_content_length})")
+            return plan
         if request.thread.enabled:
             from .threading import split_into_thread
             plan.thread_posts = split_into_thread(
@@ -244,7 +260,8 @@ def record_outcome(outcome: PublishOutcome) -> PublishOutcome:
     from .registry import record_failure, record_publication, record_thread_publication
     article = outcome.article
     source = str(outcome.request.source_file) if outcome.request else None
-    identity = dict(canonical_url=article.canonical_url, platform=outcome.result.platform,
+    platform = outcome.request.platform if outcome.request else outcome.result.platform
+    identity = dict(canonical_url=article.canonical_url, platform=platform,
                     title=article.title, source_file=source)
     try:
         if not outcome.result.success:
@@ -272,8 +289,9 @@ def record_outcome(outcome: PublishOutcome) -> PublishOutcome:
 
 
 def publish_and_record(request: PublishRequest, *, dry_run: bool = False,
+                       source_article: Article | None = None,
                        silent: bool = True, console=None) -> PublishOutcome:
-    plan = prepare_request(request, silent=silent, console=console)
+    plan = prepare_request(request, source_article=source_article, silent=silent, console=console)
     if dry_run and not plan.error:
         return _outcome(plan, PublishResult(True, plan.platform), state=PublicationState.PREVIEW)
     if dry_run:

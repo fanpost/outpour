@@ -764,7 +764,9 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 console.print("[yellow]No API platforms to publish to in batch mode.[/yellow]")
             return
 
-    article = parse_markdown_file(file)
+    from dataclasses import replace
+    source_article = parse_markdown_file(file)
+    article = replace(source_article, tags=list(source_article.tags or []))
 
     if draft:
         article.published = False
@@ -1029,138 +1031,19 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                     "error": None,
                 })()
             else:
-                # Check if manual rewrite content exceeds platform limit
-                if rewrite_content and not auto_rewrite and platform.max_content_length:
-                    max_len = platform.max_content_length
-                    if len(article.body) > max_len:
-                        results.append({
-                            "platform": platform_name,
-                            "success": False,
-                            "error": (
-                                f"Rewrite content too long:"
-                                f" {len(article.body)} chars"
-                                f" (limit: {max_len})"
-                            ),
-                            "url": None,
-                            "id": None,
-                        })
-                        continue
-
-                # Check if auto-rewrite is needed for this platform
-                publish_article = article
-                platform_rewritten = False
-                platform_rewrite_content = None
-
-                if auto_rewrite and llm_provider and platform.max_content_length:
-                    max_len = platform.max_content_length
-                    if len(article.body) > max_len:
-                        from .rewrite import auto_rewrite_for_platform
-
-                        rw = auto_rewrite_for_platform(
-                            article, platform_name, max_len, llm_provider,
-                            retry_count=auto_rewrite_retry or 0,
-                            truncate_fallback=bool(auto_rewrite_truncate),
-                            silent=silent, console=console,
-                        )
-                        if rw.success:
-                            publish_article = rw.article
-                            platform_rewritten = True
-                            platform_rewrite_content = rw.rewrite_text
-                        else:
-                            results.append({
-                                "platform": platform_name,
-                                "success": False,
-                                "error": rw.error,
-                                "url": None,
-                                "id": None,
-                            })
-                            continue
-
-                # Handle threading if requested
-                thread_result = None
-                if thread and platform.supports_threads:
-                    from .threading import split_into_thread
-
-                    # Use the content to thread (rewrite or original body)
-                    thread_content = publish_article.body
-                    max_len = platform.max_content_length or 300
-
-                    # Split into thread posts
-                    thread_posts = split_into_thread(
-                        thread_content,
-                        max_length=max_len,
-                        style=thread_style,
-                        max_posts=platform.thread_max_posts,
-                    )
-
-                    if len(thread_posts) > 1:
-                        if not silent:
-                            console.print(
-                                f"[dim]Publishing thread"
-                                f" ({len(thread_posts)} posts)"
-                                f" to {platform_name}...[/dim]"
-                            )
-                        thread_result = platform.publish_thread(thread_posts)
-                    else:
-                        # Single post, use regular publish
-                        if not silent:
-                            console.print(f"[dim]Publishing to {platform_name}...[/dim]")
-                        result = platform.publish(publish_article)
-                elif thread and not platform.supports_threads:
-                    # Platform doesn't support threads
-                    results.append({
-                        "platform": platform_name,
-                        "success": False,
-                        "error": f"{platform_name} does not support thread posting",
-                        "url": None,
-                        "id": None,
-                    })
-                    continue
-                else:
-                    from .publishing import publish_one
-
-                    # Auto-rewrite (if any) already ran in the outer block above,
-                    # because the thread path needs the rewritten article before
-                    # the thread/non-thread fork. Pass that output as an explicit
-                    # rewrite_content with auto_rewrite=False so publish_one does
-                    # not invoke the LLM a second time.
-                    effective_rewrite = (
-                        platform_rewrite_content if platform_rewritten
-                        else (rewrite_content if rewrite_content else None)
-                    )
-                    if not silent:
-                        console.print(f"[dim]Publishing to {platform_name}...[/dim]")
-                    outcome = publish_one(
-                        file, platform_name,
-                        rewrite_content=effective_rewrite,
-                        rewrite_author=rewrite_author,
-                        auto_rewrite=False,
-                        draft=draft,
-                        silent=silent,
-                        console=console,
-                    )
-                    result = outcome.result
-
-                # Handle thread result
-                if thread_result is not None:
-                    # Convert thread result to standard result for processing
-                    result = type("Result", (), {
-                        "success": thread_result.success,
-                        "article_id": thread_result.root_id,
-                        "url": thread_result.root_url,
-                        "error": thread_result.error,
-                        "requires_confirmation": False,
-                        "is_thread": True,
-                        "thread_ids": thread_result.post_ids,
-                        "thread_urls": thread_result.post_urls,
-                    })()
-
-                # Track rewrite info for registry
-                if platform_rewritten:
-                    is_rewritten = True
-                    posted_content = platform_rewrite_content
-                    if not rewrite_author:
-                        rewrite_author = f"llm:{llm_provider.model}"
+                from .publishing import (
+                    PublishRequest, RewriteOptions, ThreadOptions, publish_and_record,
+                )
+                if not silent:
+                    console.print(f"[dim]Publishing to {platform_name}...[/dim]")
+                result = publish_and_record(PublishRequest(
+                    Path(file), platform_name, draft=draft,
+                    rewrite=RewriteOptions(
+                        content=rewrite_content, author=rewrite_author, auto=auto_rewrite,
+                        provider=llm_provider, retry_count=auto_rewrite_retry,
+                        truncate=auto_rewrite_truncate),
+                    thread=ThreadOptions(thread, thread_style)),
+                    source_article=source_article, silent=silent, console=console)
 
             # Handle manual/import mode confirmation flow
             if result.requires_confirmation:
@@ -1280,44 +1163,8 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
 
             results.append(result_data)
 
-            # Record successful publication to registry
-            if result.success and article.canonical_url:
-                # Use thread-specific recording if this was a thread
-                thread_ids = getattr(result, 'thread_ids', None) if is_thread_result else None
-                if is_thread_result and thread_ids:
-                    record_thread_publication(
-                        canonical_url=article.canonical_url,
-                        platform=platform_name,
-                        root_id=result.article_id,
-                        root_url=result.url,
-                        thread_ids=thread_ids,
-                        thread_urls=getattr(result, 'thread_urls', None),
-                        title=article.title,
-                        source_file=file,
-                        rewritten=is_rewritten,
-                        rewrite_author=rewrite_author if is_rewritten else None,
-                    )
-                else:
-                    record_publication(
-                        canonical_url=article.canonical_url,
-                        platform=platform_name,
-                        article_id=result.article_id,
-                        url=result.url,
-                        title=article.title,
-                        source_file=file,
-                        rewritten=is_rewritten,
-                        rewrite_author=rewrite_author if is_rewritten else None,
-                        posted_content=posted_content if is_rewritten else None,
-                    )
-            elif not result.success and article.canonical_url and result.error:
-                # Record API-level failure for retry tracking
-                record_failure(
-                    canonical_url=article.canonical_url,
-                    platform=platform_name,
-                    error_msg=result.error,
-                    title=article.title,
-                    source_file=file,
-                )
+            if result.recording_error:
+                result_data["remote_published"] = result.remote_success
 
         except Exception as e:
             results.append({
@@ -1361,6 +1208,12 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                         "flag": "--rewrite",
                         "reason": "short-form platform",
                     }
+            for field_name in ("remote_published", "is_thread", "thread_ids", "thread_urls"):
+                if field_name in r:
+                    result_obj[field_name] = r[field_name]
+            if r.get("remote_published"):
+                result_obj["article_id"] = r.get("id")
+                result_obj["url"] = r.get("url")
             json_results.append(result_obj)
 
         output = {
@@ -3142,7 +2995,7 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                     Path(file_path), platform, rewrite=RewriteOptions(
                         auto=auto_rewrite, provider=llm_provider,
                         retry_count=auto_rewrite_retry, truncate=auto_rewrite_truncate)),
-                    silent=silent, console=console)
+                    source_article=article, silent=silent, console=console)
                 result = outcome
                 rewritten = outcome.rewritten
                 rewrite_content = outcome.posted_content

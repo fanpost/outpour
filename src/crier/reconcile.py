@@ -46,6 +46,7 @@ class ReconcileReport:
     in_both: list[ReconcileEntry] = field(default_factory=list)
     untracked_live: list[ReconcileEntry] = field(default_factory=list)
     gone_from_platform: list[ReconcileEntry] = field(default_factory=list)
+    unverified: list[ReconcileEntry] = field(default_factory=list)
     applied: bool = False
     error: str | None = None
 
@@ -110,7 +111,10 @@ def reconcile_platform(
         )
 
     try:
-        live_posts = get_platform(platform_name)(api_key).list_articles(limit)
+        listing = get_platform(platform_name)(api_key).list_articles_snapshot(limit)
+        if listing.error:
+            return ReconcileReport(platform=platform_name, error=listing.error)
+        live_posts = listing.articles
     except Exception as e:
         return ReconcileReport(
             platform=platform_name,
@@ -125,7 +129,7 @@ def reconcile_platform(
     # soft-deleting on --apply would wipe valid history. The list_articles
     # exception path covers a raised error; this covers an empty-but-200
     # response (e.g. the old bluesky limit>100 bug). Refuse rather than guess.
-    if registry_rows and not live_posts:
+    if registry_rows and not live_posts and not listing.complete:
         return ReconcileReport(
             platform=platform_name,
             error=(
@@ -134,6 +138,11 @@ def reconcile_platform(
                 f"reconcile (would falsely mark all as gone). Check the "
                 f"platform's listing/auth before retrying."
             ),
+            unverified=[
+                ReconcileEntry(platform=platform_name, bucket="unverified",
+                               title=r.get("title"), canonical_url=r.get("canonical_url"))
+                for r in registry_rows
+            ],
         )
 
     report = ReconcileReport(platform=platform_name, applied=apply)
@@ -171,15 +180,17 @@ def reconcile_platform(
 
     for r in registry_rows:
         if r["canonical_url"] not in matched_canonicals:
-            report.gone_from_platform.append(
+            bucket = report.gone_from_platform if listing.complete else report.unverified
+            bucket.append(
                 ReconcileEntry(
-                    platform=platform_name, bucket="gone_from_platform",
+                    platform=platform_name,
+                    bucket="gone_from_platform" if listing.complete else "unverified",
                     title=r.get("title"), canonical_url=r.get("canonical_url"),
                     live_id=str(r["platform_id"]) if r.get("platform_id") else None,
                     live_url=r.get("platform_url"),
                 )
             )
-            if apply:
+            if apply and listing.complete:
                 record_deletion(r["canonical_url"], platform_name)
 
     return report

@@ -59,6 +59,15 @@ class Article:
 
 
 @dataclass
+class ArticleListing:
+    """Remote observations; absence is authoritative only when complete is true."""
+
+    articles: list[dict[str, Any]] = field(default_factory=list)
+    complete: bool = False
+    error: str | None = None
+
+
+@dataclass
 class PublishResult:
     """Result of a publish operation."""
 
@@ -241,6 +250,10 @@ class Platform(ABC):
     def list_articles(self, limit: int = 10) -> list[dict[str, Any]]:
         """List articles on the platform."""
         ...
+
+    def list_articles_snapshot(self, limit: int = 10) -> ArticleListing:
+        """Wrap legacy listings conservatively without assuming pagination ended."""
+        return ArticleListing(articles=self.list_articles(limit))
 
     @abstractmethod
     def get_article(self, article_id: str) -> dict[str, Any] | None:

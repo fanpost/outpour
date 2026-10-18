@@ -1013,6 +1013,10 @@ def crier_reconcile(
                 {"title": e.title, "live_id": e.live_id, "live_url": e.live_url}
                 for e in rep.untracked_live
             ],
+            "unverified": [
+                {"title": e.title, "canonical_url": e.canonical_url}
+                for e in rep.unverified
+            ],
             "gone_from_platform": [
                 {"title": e.title, "canonical_url": e.canonical_url}
                 for e in rep.gone_from_platform

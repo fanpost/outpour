@@ -1808,6 +1808,10 @@ def reconcile(platforms: tuple[str, ...], apply_changes: bool, limit: int, json_
                     {"title": e.title, "live_id": e.live_id, "live_url": e.live_url}
                     for e in rep.untracked_live
                 ],
+                "unverified": [
+                    {"title": e.title, "canonical_url": e.canonical_url}
+                    for e in rep.unverified
+                ],
                 "gone_from_platform": [
                     {"title": e.title, "canonical_url": e.canonical_url}
                     for e in rep.gone_from_platform
@@ -1828,7 +1832,8 @@ def reconcile(platforms: tuple[str, ...], apply_changes: bool, limit: int, json_
             f"\n[bold]{name}[/bold]: "
             f"[green]{len(rep.in_both)} in sync[/green], "
             f"[yellow]{len(rep.untracked_live)} untracked[/yellow], "
-            f"[red]{len(rep.gone_from_platform)} gone[/red]"
+            f"[red]{len(rep.gone_from_platform)} gone[/red], "
+            f"{len(rep.unverified)} unverified (listing incomplete)"
         )
         for e in rep.untracked_live:
             console.print(

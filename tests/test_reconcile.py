@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+from crier.platforms.base import ArticleListing
 
 from crier.reconcile import (
     ReconcileReport,
@@ -67,12 +68,13 @@ def test_match_handles_numeric_live_id():
 # --- engine -----------------------------------------------------------------
 
 
-def _patch_engine(mode="api", api_key="real-key", live=None, registry=None):
+def _patch_engine(mode="api", api_key="real-key", live=None, registry=None, complete=True):
     """Helper: returns a context-manager stack of the 4 read-side patches."""
     live = live or []
     registry = registry or []
     inst = MagicMock()
     inst.list_articles.return_value = live
+    inst.list_articles_snapshot.return_value = ArticleListing(live, complete=complete)
     return (
         patch("crier.reconcile.get_platform_mode", return_value=mode),
         patch("crier.reconcile.get_api_key", return_value=api_key),
@@ -144,7 +146,7 @@ def test_reconcile_empty_listing_guard_refuses():
     Guards against the bluesky-returns-0 class of bug wiping valid history.
     """
     registry = [_row(platform_id="42", canonical_url="https://x/keep/")]
-    p_mode, p_key, p_plat, p_pubs = _patch_engine(live=[], registry=registry)
+    p_mode, p_key, p_plat, p_pubs = _patch_engine(live=[], registry=registry, complete=False)
     with p_mode, p_key, p_plat, p_pubs, \
             patch("crier.reconcile.record_deletion") as rec_del:
         report = reconcile_platform("devto", apply=True)
@@ -226,7 +228,7 @@ def test_reconcile_list_failure_sets_error_and_makes_no_writes(monkeypatch):
     import crier.reconcile as rec
 
     inst = MagicMock()
-    inst.list_articles.side_effect = RuntimeError("API down")
+    inst.list_articles_snapshot.side_effect = RuntimeError("API down")
     monkeypatch.setattr(rec, "get_platform_mode", lambda n: "api")
     monkeypatch.setattr(rec, "get_api_key", lambda n: "k")
     monkeypatch.setattr(rec, "get_platform", lambda n: (lambda _k: inst))
@@ -245,3 +247,43 @@ def test_reconcile_list_failure_sets_error_and_makes_no_writes(monkeypatch):
     assert report.gone_from_platform == []
     rec_del.assert_not_called()
     rec_pub.assert_not_called()
+
+
+def test_partial_listing_never_deletes_live_history(tmp_registry, monkeypatch):
+    from crier.platforms.devto import DevTo
+    from crier.registry import is_published, record_publication
+
+    monkeypatch.setenv('CRIER_DEVTO_API_KEY', 'test-key')
+    record_publication('https://site/new', 'devto', 'new', 'https://dev/new', title='New')
+    record_publication('https://site/old', 'devto', 'old', 'https://dev/old', title='Old')
+    monkeypatch.setattr(DevTo, 'list_articles', lambda self, limit=10: [
+        {'id': 'new', 'title': 'New', 'url': 'https://dev/new'}
+    ])
+    report = reconcile_platform('devto', apply=True, limit=1)
+    assert is_published('https://site/old', 'devto')
+    assert len(report.unverified) == 1
+    assert report.gone_from_platform == []
+
+
+def test_complete_empty_listing_confirms_deletion(tmp_registry, monkeypatch):
+    from crier.registry import record_publication, is_deleted
+    record_publication('https://site/gone', 'devto', 'gone', 'https://dev/gone', title='Gone')
+    inst = MagicMock()
+    inst.list_articles_snapshot.return_value = ArticleListing([], complete=True)
+    monkeypatch.setattr('crier.reconcile.get_platform', lambda p: lambda key: inst)
+    monkeypatch.setenv('CRIER_DEVTO_API_KEY', 'dummy')
+    report = reconcile_platform('devto', apply=True)
+    assert len(report.gone_from_platform) == 1
+    assert is_deleted('https://site/gone', 'devto')
+
+
+def test_listing_error_does_not_record_observations(tmp_registry, monkeypatch):
+    from crier.registry import get_all_articles
+    inst = MagicMock()
+    inst.list_articles_snapshot.return_value = ArticleListing(
+        [{'id': 'bad', 'title': 'Bad'}], complete=True, error='pagination failed')
+    monkeypatch.setattr('crier.reconcile.get_platform', lambda p: lambda key: inst)
+    monkeypatch.setenv('CRIER_DEVTO_API_KEY', 'dummy')
+    report = reconcile_platform('devto', apply=True)
+    assert report.error == 'pagination failed'
+    assert get_all_articles() == {}

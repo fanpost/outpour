@@ -662,11 +662,11 @@ def _execute_publish(
     result = outcome.result
 
     if not result.success:
-        if canonical and result.error:
+        if result.error:
             record_failure(canonical, platform, result.error, article.title, str(resolved))
         return {"error": f"Publish failed: {result.error}"}
 
-    if canonical:
+    if article is not None:
         record_publication(
             canonical_url=canonical,
             platform=platform,

@@ -801,3 +801,27 @@ def test_execute_publish_delegates_to_publish_one(monkeypatch, tmp_path):
     assert called["platform"] == "devto"
 
     reset_connection()
+
+
+@pytest.mark.parametrize('success', [True, False])
+def test_noncanonical_publish_is_recorded(mcp_registry, monkeypatch, success):
+    from crier.platforms.devto import DevTo
+    from crier.platforms.base import PublishResult
+    from crier.registry import get_article_by_file, get_publication_id, get_failures
+    md = mcp_registry / 'noncanonical.md'
+    md.write_text('---\ntitle: Noncanonical\n---\nBody.\n')
+    monkeypatch.setattr(DevTo, 'publish', lambda self, article: PublishResult(
+        success=success, platform='devto', article_id='noncanonical-id' if success else None,
+        url='https://dev/noncanonical' if success else None,
+        error=None if success else 'rejected'))
+    preview = crier_publish(str(md), 'devto')
+    assert preview['preview']['canonical_url'] is None
+    result = crier_publish(str(md), 'devto', confirmation_token=preview['confirmation_token'])
+    entry = get_article_by_file(str(md))
+    assert entry is not None
+    if success:
+        assert result['success'] is True
+        assert get_publication_id(entry[0], 'devto') == 'noncanonical-id'
+    else:
+        assert result.get('error')
+        assert get_failures()[0]['error'] == 'rejected'

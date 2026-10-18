@@ -72,6 +72,29 @@ class TestVersionCommand:
         assert result.exit_code == 0
         assert __version__ in result.output
 
+    def test_version_matches_package_metadata(self, runner):
+        from importlib.metadata import version
+
+        assert __version__ == version("crier")
+        result = runner.invoke(cli, ["--version"])
+        assert version("crier") in result.output
+
+    def test_version_fallback_without_metadata(self, monkeypatch):
+        import importlib
+        import importlib.metadata
+
+        import crier
+
+        def missing(name):
+            raise importlib.metadata.PackageNotFoundError(name)
+
+        monkeypatch.setattr(importlib.metadata, "version", missing)
+        try:
+            assert importlib.reload(crier).__version__ == "0.0.0+unknown"
+        finally:
+            monkeypatch.undo()
+            importlib.reload(crier)
+
 
 class TestDoctorCommand:
     """Tests for crier doctor command."""

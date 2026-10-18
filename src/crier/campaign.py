@@ -4,7 +4,7 @@ A campaign is a reviewable YAML manifest of (post x platform) cells to publish.
 `plan_campaign` generates the manifest from a content scan plus the registry
 (only cells not already published). Short-form platform cells carry an empty
 `rewrite` field for an agent or human to fill in before running.
-`run_campaign` executes each pending cell through `publish_one`, records the
+`run_campaign` executes each pending cell through `publish_and_record`, records the
 result, and writes status back into the manifest, so a crashed or partial run
 resumes by skipping cells already marked published.
 
@@ -151,7 +151,7 @@ def run_campaign(
     Resumable and idempotent: cells already marked `published` are skipped.
     Short-form cells with an empty `rewrite` become `needs_rewrite` and are not
     published. Dry-run (apply=False) makes no publishes and no manifest writes.
-    Recording is done here (publish_one does not touch the registry).
+    The shared publishing service owns registry recording.
 
     ``max_cells`` caps how many cells are actually published in this run (only
     real publish attempts count, not skips or needs_rewrite). This is the drip

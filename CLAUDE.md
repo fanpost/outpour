@@ -587,7 +587,17 @@ write whose local recording failed. Do not convert outcomes into synthetic
 classes or record them again in an API caller. Keep manual/import confirmation
 in the CLI. For scheduled recording errors after remote success, retain terminal
 published state and report the error. Campaigns use `published_unrecorded` to
-prevent resending an untracked successful post.
+prevent resending an untracked successful post. `publication_receipts.py` stores
+atomic recovery receipts beside the database after recording failure. Audit retry
+uses these snapshots for local recording only, including when the source file is
+now missing. A corrupt receipt blocks remote retry; a receipt older than a newer
+failure does not mask that later attempt. Receipts contain article/result metadata,
+never credentials. Successful recording removes the matching receipt.
+
+`awaiting_confirmation` is not a successful remote write. Preserve CLI manual
+confirmation, but automated callers must report the required manual action.
+Attribution precedence is explicit author, then `llm:<model>` for an actual LLM
+rewrite, then the configured default for supplied rewrite text.
 
 `Platform.list_articles_snapshot()` defaults to an incomplete `ArticleListing`
 for legacy adapters. Only an adapter that exhausted pagination successfully may

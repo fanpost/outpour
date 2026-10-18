@@ -7,6 +7,7 @@ intentionally executes without recording.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
@@ -18,6 +19,8 @@ from .platforms import get_platform
 from .platforms.base import Article, Platform, PublishResult, ThreadPublishResult
 from .rewrite import apply_rewrite, auto_rewrite_for_platform
 
+logger = logging.getLogger(__name__)
+
 
 class ThreadStyle(str, Enum):
     NUMBERED = "numbered"
@@ -27,6 +30,7 @@ class ThreadStyle(str, Enum):
 
 class PublicationState(str, Enum):
     PREVIEW = "preview"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
     REMOTE_FAILED = "remote_failed"
     FAILURE_RECORDED = "failure_recorded"
     REMOTE_SUCCEEDED = "remote_succeeded"
@@ -91,6 +95,8 @@ class PublishOutcome:
     state: PublicationState | None = None
 
     def __post_init__(self):
+        if self.state is None and self.requires_confirmation:
+            self.state = PublicationState.AWAITING_CONFIRMATION
         if self.state is None:
             self.state = (
                 PublicationState.REMOTE_SUCCEEDED
@@ -100,7 +106,11 @@ class PublishOutcome:
 
     @property
     def remote_success(self) -> bool:
-        return self.result.success and self.state != PublicationState.PREVIEW
+        return (
+            self.result.success
+            and not self.requires_confirmation
+            and self.state != PublicationState.PREVIEW
+        )
 
     @property
     def article_id(self) -> str | None:
@@ -128,11 +138,17 @@ class PublishOutcome:
 
     @property
     def success(self) -> bool:
-        return self.result.success and self.recording_error is None
+        return (
+            self.result.success and not self.requires_confirmation and self.recording_error is None
+        )
 
     @property
     def error(self) -> str | None:
-        return self.recording_error or self.result.error
+        return (
+            self.recording_error
+            or self.result.error
+            or ("Manual confirmation required; use the CLI" if self.requires_confirmation else None)
+        )
 
     @property
     def requires_confirmation(self) -> bool:
@@ -352,7 +368,56 @@ def record_outcome(outcome: PublishOutcome) -> PublishOutcome:
     except Exception as exc:  # noqa: BLE001 — isolate adapter and recording failures
         outcome.recording_error = str(exc)
         outcome.state = PublicationState.RECORDING_FAILED
+        if outcome.remote_success and outcome.request is not None:
+            from datetime import datetime, timezone
+
+            from .publication_receipts import PublicationReceipt, save_receipt
+
+            try:
+                save_receipt(
+                    PublicationReceipt(
+                        source_file=str(outcome.request.source_file),
+                        platform=platform,
+                        created_at=datetime.now(timezone.utc).isoformat(),
+                        article=article,
+                        result=outcome.result,
+                        rewritten=outcome.rewritten,
+                        posted_content=outcome.posted_content,
+                        rewrite_author=outcome.rewrite_author,
+                    )
+                )
+            except Exception as receipt_error:  # noqa: BLE001 — preserve the known remote result
+                outcome.recording_error += f"; could not save recovery receipt: {receipt_error}"
+    else:
+        if outcome.state == PublicationState.RECORDED and outcome.request is not None:
+            from .publication_receipts import remove_receipt
+
+            try:
+                remove_receipt(outcome.request.source_file, platform)
+            except Exception:  # noqa: BLE001 — cleanup cannot invalidate a committed publication
+                logger.debug("Could not remove stale publication recovery receipt")
     return outcome
+
+
+def recover_unrecorded(
+    request: PublishRequest, *, failed_at: str | None = None, dry_run: bool = False
+) -> PublishOutcome | None:
+    """Retry only local persistence of an earlier remote success, never publish."""
+    from .publication_receipts import load_receipt
+
+    receipt = load_receipt(request.source_file, request.platform)
+    if receipt is None or not receipt.covers_failure(failed_at):
+        return None
+    outcome = PublishOutcome(
+        receipt.result,
+        receipt.article,
+        rewritten=receipt.rewritten,
+        posted_content=receipt.posted_content,
+        rewrite_author=receipt.rewrite_author,
+        request=replace(request, source_file=Path(receipt.source_file)),
+        state=PublicationState.PREVIEW if dry_run else PublicationState.REMOTE_SUCCEEDED,
+    )
+    return outcome if dry_run else record_outcome(outcome)
 
 
 def publish_and_record(

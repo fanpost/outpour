@@ -615,6 +615,8 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
             console.print("[dim]Set a default: crier config set default_profile <name>[/dim]")
         raise SystemExit(1)
 
+    # Preserve whether attribution was explicitly supplied before resolving UI defaults.
+    explicit_rewrite_author = rewrite_author
     # Use config default for rewrite_author if not specified
     if rewrite_author is None:
         rewrite_author = get_rewrite_author()
@@ -733,7 +735,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 rewrite=rewrite_content,
                 auto_rewrite=auto_rewrite,
                 profile=profile_name,
-                rewrite_author=rewrite_author,
+                rewrite_author=explicit_rewrite_author if auto_rewrite else rewrite_author,
                 thread=thread,
                 thread_style=thread_style,
                 draft=draft,
@@ -1072,7 +1074,9 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 result = publish_and_record(PublishRequest(
                     Path(file), platform_name, draft=draft,
                     rewrite=RewriteOptions(
-                        content=rewrite_content, author=rewrite_author, auto=auto_rewrite,
+                        content=rewrite_content,
+                        author=explicit_rewrite_author if auto_rewrite else rewrite_author,
+                        auto=auto_rewrite,
                         provider=llm_provider, retry_count=auto_rewrite_retry,
                         truncate=auto_rewrite_truncate),
                     thread=ThreadOptions(thread, thread_style)),
@@ -2537,25 +2541,31 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                 canonical_url = failure["canonical_url"]
                 source_file = failure.get("source_file")
 
-                if not source_file or not Path(source_file).exists():
+                from .publishing import PublishRequest, publish_and_record, recover_unrecorded
+                outcome = None
+                if source_file:
+                    try:
+                        outcome = recover_unrecorded(
+                            PublishRequest(Path(source_file), platform_name),
+                            failed_at=failure.get("error_at"), dry_run=dry_run)
+                    except (OSError, ValueError, TypeError, KeyError) as exc:
+                        retry_results.append({
+                            "platform": platform_name, "canonical_url": canonical_url,
+                            "success": False, "error": f"Cannot read recovery receipt: {exc}",
+                        })
+                        continue
+                if outcome is None and (not source_file or not Path(source_file).exists()):
                     retry_results.append({
-                        "platform": platform_name,
-                        "canonical_url": canonical_url,
-                        "success": False,
-                        "error": "Source file not found",
+                        "platform": platform_name, "canonical_url": canonical_url,
+                        "success": False, "error": "Source file not found",
                     })
                     continue
-
                 if dry_run:
                     retry_results.append({
-                        "platform": platform_name,
-                        "canonical_url": canonical_url,
-                        "success": True,
-                        "action": "would_retry",
+                        "platform": platform_name, "canonical_url": canonical_url,
+                        "success": True, "action": "would_record" if outcome else "would_retry",
                     })
                     continue
-
-                from .publishing import PublishRequest, publish_and_record
 
                 if not silent:
                     console.print(
@@ -2563,7 +2573,8 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                         f" for {Path(source_file).name}...[/dim]"
                     )
 
-                outcome = publish_and_record(PublishRequest(Path(source_file), platform_name))
+                if outcome is None:
+                    outcome = publish_and_record(PublishRequest(Path(source_file), platform_name))
                 result = outcome
 
                 if result.success:

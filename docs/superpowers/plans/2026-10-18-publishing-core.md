@@ -1,6 +1,6 @@
 # Publishing Repairs and Shared Core Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Repair the seven verified bugs, then give automated publishing one preparation, execution, and recording flow.
 
@@ -189,13 +189,31 @@ publish_and_record(request: PublishRequest, *, dry_run: bool = False) -> Publish
 
 **Files:** new `tests/test_publishing_integration.py`; `tests/conftest.py`, `README.md`, `CLAUDE.md`, approved spec status if needed. Do not edit `AGENTS.md`.
 
-- [ ] Parameterize equivalent supported inputs across immediate CLI, MCP, campaign, audit/retry, and schedule entry points using a shared fake adapter and isolated real registries. Assert identical captured `Article`, remote IDs, rewrite attribution, one publication row, and one recording attempt. Parameterize thread cases only over entry points exposing threads. Test old `publish_one` still leaves the DB untouched. Commit tests with any parity corrections after red/green verification.
-- [ ] Create an isolated development venv outside the repository if dependencies are missing; install editable `.[dev,mcp,nostr]` and `build`. Run `PYTHONPATH=src python -m pytest --cov=crier --cov-report=term-missing`. Require zero failures, inspect skipped tests and missed core/error branches, and avoid reducing existing coverage. Run Python 3.10 and an available 3.11+ environment; report unavailable matrix entries explicitly.
-- [ ] Run Ruff on touched source/tests and fix introduced diagnostics. Compare any pre-existing diagnostics against baseline rather than reformatting the entire CLI. Run `python -m build --outdir /tmp/crier-core-dist`; inspect wheel/sdist contents and conditional TOML dependency metadata, install the wheel in a clean venv, and run `crier --help`. Run `git diff --check` and review the diff against all seven repairs and the spec.
-- [ ] Update README/CLAUDE guidance for incomplete reconciliation, scheduled path compatibility, shared publishing stages, and remote-success/recording-error behavior. Remove obsolete claims about caller-owned recording and manual platform registration. Perform a focused code review of changed files, address findings with regressions, rerun affected/full checks, and commit documentation as `docs: describe shared publishing and reconciliation safety`.
+- [x] Parameterize equivalent supported inputs across immediate CLI, MCP, campaign, audit/retry, and schedule entry points using a shared fake adapter and isolated real registries. Assert identical captured `Article`, remote IDs, rewrite attribution, one publication row, and one recording attempt. Parameterize thread cases only over entry points exposing threads. Test old `publish_one` still leaves the DB untouched. Commit tests with any parity corrections after red/green verification.
+- [x] Create an isolated development venv outside the repository if dependencies are missing; install editable `.[dev,mcp,nostr]` and `build`. Run `PYTHONPATH=src python -m pytest --cov=crier --cov-report=term-missing`. Require zero failures, inspect skipped tests and missed core/error branches, and avoid reducing existing coverage. Run Python 3.10 and an available 3.11+ environment; report unavailable matrix entries explicitly.
+- [x] Run Ruff on touched source/tests and fix introduced diagnostics. Compare any pre-existing diagnostics against baseline rather than reformatting the entire CLI. Run `python -m build --outdir /tmp/crier-core-dist`; inspect wheel/sdist contents and conditional TOML dependency metadata, install the wheel in a clean venv, and run `crier --help`. Run `git diff --check` and review the diff against all seven repairs and the spec.
+- [x] Update README/CLAUDE guidance for incomplete reconciliation, scheduled path compatibility, shared publishing stages, and remote-success/recording-error behavior. Remove obsolete claims about caller-owned recording and manual platform registration. Perform a focused code review of changed files, address findings with regressions, rerun affected/full checks, and commit documentation as `docs: describe shared publishing and reconciliation safety`.
 
 ## Execution Handoff
 
 Review this plan before source changes. Recommended method: **Native**, implementing sequentially in this session with one independent whole-change review at the end. The caller migrations depend on a common interface, making sequential execution straightforward. **Subagent-driven** execution is also available, with an independent implementation/review cycle for each task.
 
 Neither method permits live publishing during tests. Preserve the user's existing work; stage/commit only task-owned changes, especially when adding the conditional TOML dependency beside the pre-existing MCP dependency edit.
+
+## Execution Results
+
+Implemented on `fix/publishing-core`. The final independent review identified
+three safety/parity gaps: retry after recording failure, pending manual
+confirmation, and default LLM attribution. Each was reproduced by a failing test
+and addressed in the native fix pass. Recovery receipts preserve remote results
+for local recording repair without another remote write; corrupt receipts block
+retry and successful repair works even after source removal.
+
+Final verification: 1,408 tests passed on Python 3.10 and 1,408 on Python 3.11;
+coverage is 82% (baseline 79%). Wheel and source-distribution builds passed; a
+clean Python 3.10 wheel installation verified CLI startup, packaged skill,
+receipt module, lifecycle enum, TOML parsing, and conditional dependencies.
+Ruff introduced no diagnostics relative to the baseline; new receipt code/tests
+pass lint directly. `git diff --check` passed. Network calls were mocked or
+blocked during verification. Existing MCP dependency edits and AGENTS.md were
+preserved.

@@ -231,6 +231,8 @@ def test_recording_failure_retains_remote_success(recording_platform, tmp_path, 
     assert outcome.remote_success
     assert outcome.state.value == 'recording_failed'
     assert outcome.recording_error == 'database unavailable'
+    receipt = next(tmp_path.glob('.*.recovery/*.json'))
+    assert 'test-secret' not in receipt.read_text()
     assert len(recording_platform.articles) == 1
 
 
@@ -326,3 +328,39 @@ def test_failed_outcome_is_recorded_only_once(recording_platform, tmp_path, monk
     assert not outcome.success
     assert registry.get_failures()[0]['error'] == 'remote failed'
     assert len(calls) == 1
+
+
+def test_manual_confirmation_is_not_remote_success(recording_platform, tmp_path, monkeypatch):
+    from crier.publishing import PublishRequest, publish_and_record
+    from crier.registry import get_all_articles
+    md = tmp_path / 'manual.md'
+    md.write_text('---\ntitle: Manual\n---\nBody.')
+    monkeypatch.setattr(recording_platform, 'publish', lambda self, article: PublishResult(
+        True, self.name, requires_confirmation=True, manual_content='Manual body.',
+        compose_url='https://remote/compose'))
+    outcome = publish_and_record(PublishRequest(md, 'test_platform'))
+    assert outcome.requires_confirmation
+    assert not outcome.remote_success
+    assert not outcome.success
+    assert outcome.state.value == 'awaiting_confirmation'
+    assert outcome.error
+    assert get_all_articles() == {}
+
+
+def test_recovery_metadata_error_never_hides_remote_success(recording_platform, tmp_path, monkeypatch):
+    import yaml
+
+    from crier.publishing import PublishRequest, publish_and_record
+    md = tmp_path / 'recovery-error.md'
+    md.write_text('---\ntitle: Recovery error\n---\nBody.')
+    def broken_record(**kwargs):
+        raise RuntimeError('registry unavailable')
+    def broken_receipt(*args):
+        raise yaml.YAMLError('configuration unreadable')
+    monkeypatch.setattr('crier.registry.record_publication', broken_record)
+    monkeypatch.setattr('crier.publication_receipts.save_receipt', broken_receipt)
+    outcome = publish_and_record(PublishRequest(md, 'test_platform'))
+    assert outcome.remote_success
+    assert outcome.article_id == 'remote-1'
+    assert 'registry unavailable' in outcome.error
+    assert 'configuration unreadable' in outcome.error

@@ -661,9 +661,11 @@ New schedules store absolute source paths. Legacy relative paths resolve from
 directory. Correct old paths if their original creation directory differed.
 
 If a remote publish succeeds but registry recording fails, results include the
-remote ID/URL and `remote_published: true` where available. Reconcile the remote
-post before retrying. Schedules remain terminal `published` with an error;
-campaign cells become `published_unrecorded` and subsequent runs skip them.
+remote ID/URL and `remote_published: true` where available. A recovery receipt beside the registry database retains the prepared article
+and remote result without credentials. When retrying an existing failure,
+`audit --retry` repairs recording from that receipt instead of posting again;
+unreadable receipts block retry. Schedules remain terminal `published` with an
+error; campaign cells become `published_unrecorded` and subsequent runs skip them.
 
 ## Custom Platforms
 

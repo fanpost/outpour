@@ -266,3 +266,205 @@ def test_audit_no_pending_cells_still_returns_json(parity_source, recording_plat
     assert data["results"] == []
     assert data["summary"]["failed"] == 0
     assert len(recording_platform.articles) == 1
+
+
+def test_audit_retry_recovers_recording_without_reposting(
+    parity_source, recording_platform, monkeypatch
+):
+    registry.record_failure(
+        "https://site/parity",
+        "test_platform",
+        "old error",
+        title="Parity",
+        source_file=str(parity_source),
+    )
+    runner = CliRunner()
+    with monkeypatch.context() as patcher:
+
+        def unavailable(**kwargs):
+            raise RuntimeError("registry unavailable")
+
+        patcher.setattr(registry, "record_publication", unavailable)
+        first = runner.invoke(cli, ["audit", "--retry", "--json"])
+        second = runner.invoke(cli, ["audit", "--retry", "--json"])
+        assert first.exit_code == second.exit_code == 1
+        assert len(recording_platform.articles) == 1
+    parity_source.unlink()  # Recovery uses the stored snapshot, not a fresh source read.
+    recovered = runner.invoke(cli, ["audit", "--retry", "--json"])
+    assert recovered.exit_code == 0, recovered.output
+    assert len(recording_platform.articles) == 1
+    assert registry.get_publication_id("https://site/parity", "test_platform") == "remote-1"
+    assert registry.get_failures() == []
+
+
+@pytest.mark.parametrize("entry", ["cli", "audit", "schedule"])
+def test_auto_rewrite_default_attribution_is_consistent(
+    entry, parity_source, recording_platform, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from crier.llm.provider import RewriteResult
+
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+    provider = MagicMock()
+    provider.model = "unit-model"
+    provider.rewrite.return_value = RewriteResult("Short.", "unit-model")
+    monkeypatch.setattr("crier.llm.get_provider", lambda *a, **kw: provider)
+    parity_source.write_text(parity_source.read_text() + " Long sentence." * 100)
+    runner = CliRunner()
+    if entry == "schedule":
+        from crier.scheduler import load_schedule, save_schedule
+
+        created = runner.invoke(
+            cli,
+            [
+                "publish",
+                str(parity_source),
+                "--to",
+                "test_platform",
+                "--auto-rewrite",
+                "--schedule",
+                "2099-01-01 09:00",
+            ],
+        )
+        assert created.exit_code == 0, created.output
+        data = load_schedule()
+        data["scheduled_posts"][0]["scheduled_time"] = (
+            datetime.now(timezone.utc) - timedelta(minutes=1)
+        ).isoformat()
+        save_schedule(data)
+        result = runner.invoke(cli, ["schedule", "run", "--json"])
+    elif entry == "audit":
+        result = runner.invoke(
+            cli,
+            [
+                "audit",
+                str(parity_source.parent),
+                "--to",
+                "test_platform",
+                "--publish",
+                "--batch",
+                "--auto-rewrite",
+            ],
+        )
+    else:
+        result = runner.invoke(
+            cli,
+            [
+                "publish",
+                str(parity_source),
+                "--to",
+                "test_platform",
+                "--batch",
+                "--no-check",
+                "--auto-rewrite",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    row = registry.get_connection().execute("SELECT * FROM publications").fetchone()
+    assert row["rewrite_author"] == "llm:unit-model"
+    assert row["posted_content"] == "Short."
+
+
+def test_cli_can_confirm_adapter_manual_fallback(parity_source, recording_platform, monkeypatch):
+    from crier.platforms.base import PublishResult
+
+    monkeypatch.setattr(
+        recording_platform,
+        "publish",
+        lambda self, article: PublishResult(
+            True,
+            self.name,
+            requires_confirmation=True,
+            manual_content="Manual body.",
+            compose_url="https://remote/compose",
+        ),
+    )
+    monkeypatch.setattr("pyperclip.copy", lambda text: None)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "publish",
+            str(parity_source),
+            "--to",
+            "test_platform",
+            "--yes",
+            "--no-browser",
+            "--no-check",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert registry.get_publication_id("https://site/parity", "test_platform") == "manual"
+
+
+@pytest.mark.parametrize("entry", ["mcp", "schedule", "campaign"])
+def test_automated_entry_points_require_actual_publication(
+    entry, parity_source, recording_platform, monkeypatch
+):
+    from crier.platforms.base import PublishResult
+
+    monkeypatch.setattr(
+        recording_platform,
+        "publish",
+        lambda self, article: PublishResult(
+            True, self.name, requires_confirmation=True, manual_content="Manual body."
+        ),
+    )
+    if entry == "mcp":
+        from crier.mcp_server import crier_publish
+
+        token = crier_publish(str(parity_source), "test_platform")["confirmation_token"]
+        result = crier_publish(str(parity_source), "test_platform", confirmation_token=token)
+        assert "Manual confirmation" in result["error"]
+    elif entry == "campaign":
+        from crier.campaign import run_campaign, save_manifest
+
+        save_manifest(
+            "manual",
+            {
+                "posts": [
+                    {
+                        "canonical_url": "https://site/parity",
+                        "file": str(parity_source),
+                        "targets": {"test_platform": {"status": "pending"}},
+                    }
+                ]
+            },
+        )
+        result = run_campaign("manual", apply=True)
+        assert result.published == 0 and result.failed == 1
+    else:
+        from crier.scheduler import create_scheduled_post, load_schedule
+
+        create_scheduled_post(
+            str(parity_source), "test_platform", datetime.now(timezone.utc) - timedelta(minutes=1)
+        )
+        result = CliRunner().invoke(cli, ["schedule", "run", "--json"])
+        assert result.exit_code == 1
+        assert load_schedule()["scheduled_posts"][0]["status"] == "failed"
+    assert registry.get_all_articles() == {}
+
+
+def test_corrupt_recovery_receipt_blocks_remote_retry(
+    parity_source, recording_platform, monkeypatch, tmp_path
+):
+    registry.record_failure(
+        "https://site/parity",
+        "test_platform",
+        "old error",
+        title="Parity",
+        source_file=str(parity_source),
+    )
+    with monkeypatch.context() as patcher:
+
+        def unavailable(**kwargs):
+            raise RuntimeError("registry unavailable")
+
+        patcher.setattr(registry, "record_publication", unavailable)
+        CliRunner().invoke(cli, ["audit", "--retry", "--json"])
+    receipt = next(tmp_path.glob(".*.recovery/*.json"))
+    receipt.write_text("{bad json")
+    result = CliRunner().invoke(cli, ["audit", "--retry", "--json"])
+    assert result.exit_code == 1
+    assert "Cannot read recovery receipt" in json.loads(result.output)["results"][0]["error"]
+    assert len(recording_platform.articles) == 1

@@ -1,7 +1,7 @@
 # Publishing Repairs and Shared Core
 
-Status: approved by the user. Implementation follows review of the implementation
-plan and selection of its execution method.
+Status: implemented and verified on `fix/publishing-core`; see the implementation
+plan for execution results.
 
 ## Outcome and scope
 
@@ -180,3 +180,16 @@ over the user's existing global environment or publish real content for testing.
 Keep the pre-existing MCP dependency constraint and `AGENTS.md` content intact.
 Do not introduce a registry schema migration, queue dependency, or unrelated CLI
 reorganization in this iteration.
+
+## Execution clarification: recovery receipts
+
+Independent review reproduced an existing-failure audit retry that published
+remotely twice after registry recording failed. Campaign/schedule terminal states
+alone cannot protect that route. The service now saves an atomic typed recovery
+receipt beside the database when a remote success cannot be recorded. Retry uses
+that receipt only to repair local recording, even if the source is gone; malformed
+receipts block remote retry, and older receipts cannot mask newer failures. This
+adds no queue or database schema. Receipts contain article/result metadata without
+credentials and are removed after recording succeeds. Pending manual confirmation
+is explicitly distinct from remote success. Explicit attribution overrides LLM
+attribution; configured defaults apply to supplied rewrite text.

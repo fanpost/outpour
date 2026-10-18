@@ -2541,6 +2541,7 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                 canonical_url = failure["canonical_url"]
                 source_file = failure.get("source_file")
 
+                from .publication_receipts import UnreadableReceipt
                 from .publishing import PublishRequest, publish_and_record, recover_unrecorded
                 outcome = None
                 if source_file:
@@ -2548,7 +2549,7 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                         outcome = recover_unrecorded(
                             PublishRequest(Path(source_file), platform_name),
                             failed_at=failure.get("error_at"), dry_run=dry_run)
-                    except (OSError, ValueError, TypeError, KeyError) as exc:
+                    except UnreadableReceipt as exc:
                         retry_results.append({
                             "platform": platform_name, "canonical_url": canonical_url,
                             "success": False, "error": f"Cannot read recovery receipt: {exc}",

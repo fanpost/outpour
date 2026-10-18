@@ -807,3 +807,124 @@ def test_noncanonical_publish_is_recorded(mcp_registry, monkeypatch, success):
     else:
         assert result.get('error')
         assert get_failures()[0]['error'] == 'rejected'
+
+
+# ============================================================================
+# Recovery receipts: a live but unrecorded post must never be republished
+# ============================================================================
+
+
+def _publish_with_broken_registry(md, monkeypatch):
+    """Confirm a publish whose remote write succeeds but whose recording fails."""
+    preview = crier_publish(str(md), 'test_platform')
+    with monkeypatch.context() as patcher:
+        def unavailable(**kwargs):
+            raise RuntimeError('registry unavailable')
+        patcher.setattr('crier.registry.record_publication', unavailable)
+        result = crier_publish(str(md), 'test_platform',
+                               confirmation_token=preview['confirmation_token'])
+    assert result['remote_published'] is True
+    return result
+
+
+def test_publish_preview_flags_unrecorded_remote_publication(
+    recording_platform, tmp_path, monkeypatch
+):
+    md = tmp_path / 'live.md'
+    md.write_text('---\ntitle: Live\n---\nBody.')
+    _publish_with_broken_registry(md, monkeypatch)
+
+    dry = crier_publish(str(md), 'test_platform', dry_run=True)
+    step1 = crier_publish(str(md), 'test_platform')
+    for preview in (dry['preview'], step1['preview']):
+        assert preview['already_published'] is False  # the registry write failed
+        assert preview['unrecorded_publication'] == {
+            'article_id': 'remote-1', 'url': 'https://remote/1',
+        }
+    assert 'record' in step1['message']
+    assert len(recording_platform.articles) == 1
+
+
+def test_publish_step2_recovers_receipt_without_reposting(
+    recording_platform, tmp_path, monkeypatch
+):
+    from crier.registry import get_publication_id
+    md = tmp_path / 'live.md'
+    md.write_text('---\ntitle: Live\n---\nBody.')
+    _publish_with_broken_registry(md, monkeypatch)
+
+    preview = crier_publish(str(md), 'test_platform')
+    result = crier_publish('ignored.md', 'ignored',
+                           confirmation_token=preview['confirmation_token'])
+
+    assert result['success'] is True
+    assert result['recovered'] is True
+    assert result['article_id'] == 'remote-1'
+    assert result['url'] == 'https://remote/1'
+    assert len(recording_platform.articles) == 1  # no second remote write
+    assert get_publication_id('live', 'test_platform') == 'remote-1'
+    assert not list(tmp_path.glob('.*.recovery/*.json'))  # receipt consumed
+
+
+def test_publish_step2_recovery_reports_repeated_recording_failure(
+    recording_platform, tmp_path, monkeypatch
+):
+    md = tmp_path / 'live.md'
+    md.write_text('---\ntitle: Live\n---\nBody.')
+    _publish_with_broken_registry(md, monkeypatch)
+
+    preview = crier_publish(str(md), 'test_platform')
+    with monkeypatch.context() as patcher:
+        def unavailable(**kwargs):
+            raise RuntimeError('registry unavailable')
+        patcher.setattr('crier.registry.record_publication', unavailable)
+        result = crier_publish(str(md), 'test_platform',
+                               confirmation_token=preview['confirmation_token'])
+
+    assert 'error' in result
+    assert result['remote_published'] is True
+    assert result['recovered'] is True
+    assert result['article_id'] == 'remote-1'
+    assert len(recording_platform.articles) == 1
+
+
+def test_corrupt_receipt_blocks_mcp_publish(recording_platform, tmp_path, monkeypatch):
+    md = tmp_path / 'live.md'
+    md.write_text('---\ntitle: Live\n---\nBody.')
+    early = crier_publish(str(md), 'test_platform')  # minted before the receipt existed
+    _publish_with_broken_registry(md, monkeypatch)
+    next(tmp_path.glob('.*.recovery/*.json')).write_text('{bad json')
+
+    for preview in (crier_publish(str(md), 'test_platform'),
+                    crier_publish(str(md), 'test_platform', dry_run=True)):
+        assert 'Cannot read recovery receipt' in preview['error']
+        assert 'confirmation_token' not in preview
+    step2 = crier_publish(str(md), 'test_platform', confirmation_token=early['confirmation_token'])
+    assert 'Cannot read recovery receipt' in step2['error']
+    assert len(recording_platform.articles) == 1
+
+
+def test_stale_token_cannot_republish_after_unrecorded_success(
+    recording_platform, tmp_path, monkeypatch
+):
+    md = tmp_path / 'live.md'
+    md.write_text('---\ntitle: Live\n---\nBody.')
+    early = crier_publish(str(md), 'test_platform')  # minted before any receipt
+    _publish_with_broken_registry(md, monkeypatch)
+
+    result = crier_publish(str(md), 'test_platform',
+                           confirmation_token=early['confirmation_token'])
+    assert result['recovered'] is True
+    assert len(recording_platform.articles) == 1
+
+
+def test_publish_without_receipt_is_unchanged(recording_platform, tmp_path):
+    md = tmp_path / 'fresh.md'
+    md.write_text('---\ntitle: Fresh\n---\nBody.')
+    preview = crier_publish(str(md), 'test_platform')
+    assert preview['preview']['unrecorded_publication'] is None
+    result = crier_publish(str(md), 'test_platform',
+                           confirmation_token=preview['confirmation_token'])
+    assert result['success'] is True
+    assert result['recovered'] is False
+    assert len(recording_platform.articles) == 1

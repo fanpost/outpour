@@ -18,6 +18,10 @@ from .config import get_db_path
 from .platforms.base import Article, PublishResult, ThreadPublishResult
 
 
+class UnreadableReceipt(ValueError):
+    """A receipt exists but cannot be trusted; callers must not repeat the remote write."""
+
+
 @dataclass
 class PublicationReceipt:
     source_file: str
@@ -69,7 +73,22 @@ def load_receipt(source_file: str | Path, platform: str) -> PublicationReceipt |
     path = _path(source_file, platform)
     if not path.exists():
         return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        receipt = _parse(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise UnreadableReceipt(str(exc)) from exc
+    if (
+        receipt.source_file != str(Path(source_file).expanduser().resolve())
+        or receipt.platform != platform
+        or receipt.result.success is not True
+        or getattr(receipt.result, "requires_confirmation", False)
+    ):
+        raise UnreadableReceipt("Invalid publication recovery receipt identity or result")
+    return receipt
+
+
+def _parse(text: str) -> PublicationReceipt:
+    payload = json.loads(text)
     if payload.pop("version") != 1:
         raise ValueError("Unsupported publication recovery receipt version")
     kind = payload.pop("kind")
@@ -78,15 +97,7 @@ def load_receipt(source_file: str | Path, platform: str) -> PublicationReceipt |
     result_type = ThreadPublishResult if kind == "thread" else PublishResult
     payload["result"] = result_type(**payload["result"])
     payload["article"] = Article(**payload["article"])
-    receipt = PublicationReceipt(**payload)
-    if (
-        receipt.source_file != str(Path(source_file).expanduser().resolve())
-        or receipt.platform != platform
-        or receipt.result.success is not True
-        or getattr(receipt.result, "requires_confirmation", False)
-    ):
-        raise ValueError("Invalid publication recovery receipt identity or result")
-    return receipt
+    return PublicationReceipt(**payload)
 
 
 def remove_receipt(source_file: str | Path, platform: str) -> None:

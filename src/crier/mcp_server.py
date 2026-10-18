@@ -598,18 +598,27 @@ def _prepare_publish(file_path: str, platform: str, rewrite_content: str | None,
     return {"error": plan.error} if plan.error else plan
 
 
+def _receipt_error(exc: Exception) -> dict:
+    return {"error": f"Cannot read recovery receipt: {exc}"}
+
+
 def _execute_publish(plan) -> dict:
-    """Execute and record the prepared snapshot without rereading its source."""
-    from .publishing import execute_plan, record_outcome
-    outcome = record_outcome(execute_plan(plan))
+    """Record the prepared snapshot, from its recovery receipt if it is already live."""
+    from .publication_receipts import UnreadableReceipt
+    from .publishing import execute_or_recover
+    try:
+        outcome = execute_or_recover(plan)
+    except UnreadableReceipt as exc:
+        return _receipt_error(exc)
     if not outcome.success:
         if outcome.remote_success:
             return {"error": f"Published remotely but registry recording failed: {outcome.error}",
-                    "remote_published": True, "article_id": outcome.article_id,
-                    "url": outcome.url}
+                    "remote_published": True, "recovered": outcome.recovered,
+                    "article_id": outcome.article_id, "url": outcome.url}
         return {"error": f"Publish failed: {outcome.error}"}
     return {"success": True, "platform": plan.platform, "title": outcome.article.title,
-            "article_id": outcome.article_id, "url": outcome.url}
+            "recovered": outcome.recovered, "article_id": outcome.article_id,
+            "url": outcome.url}
 
 
 @mcp.tool()
@@ -628,6 +637,10 @@ def crier_publish(
 
     For short-form platforms (bluesky, mastodon), pass rewrite_content
     with a condensed version. Crier appends the canonical URL automatically.
+
+    If an earlier publish went live but its registry write failed, the preview's
+    unrecorded_publication holds that live article_id/url, and step 2 records it
+    from the recovery receipt (result has recovered=True) instead of reposting.
 
     Examples:
         # Step 1: preview
@@ -666,6 +679,13 @@ def crier_publish(
     resolved, article = prepared.request.source_file, prepared.article
     is_rewritten = prepared.rewritten
 
+    from .publication_receipts import UnreadableReceipt
+    from .publishing import recover_unrecorded
+    try:
+        unrecorded = recover_unrecorded(prepared.request, dry_run=True)
+    except UnreadableReceipt as exc:
+        return _receipt_error(exc)
+
     from .registry import is_published
     canonical = article.canonical_url
     preview = {
@@ -676,6 +696,9 @@ def crier_publish(
         "is_rewrite": is_rewritten,
         "body_length": len(article.body) if article.body else 0,
         "already_published": is_published(canonical, platform) if canonical else False,
+        "unrecorded_publication": (
+            {"article_id": unrecorded.article_id, "url": unrecorded.url} if unrecorded else None
+        ),
     }
 
     if dry_run:
@@ -692,6 +715,10 @@ def crier_publish(
         "preview": preview,
         "confirmation_token": token,
         "message": (
+            f"'{article.title}' is already live on {platform} but unrecorded "
+            f"({unrecorded.url or unrecorded.article_id}). Call again with "
+            f"confirmation_token to record it; nothing will be republished."
+            if unrecorded else
             f"Call again with confirmation_token to publish "
             f"'{article.title}' to {platform}"
         ),

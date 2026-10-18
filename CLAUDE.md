@@ -592,7 +592,12 @@ atomic recovery receipts beside the database after recording failure. Audit retr
 uses these snapshots for local recording only, including when the source file is
 now missing. A corrupt receipt blocks remote retry; a receipt older than a newer
 failure does not mask that later attempt. Receipts contain article/result metadata,
-never credentials. Successful recording removes the matching receipt.
+never credentials. Successful recording removes the matching receipt. Unreadable
+receipts raise `UnreadableReceipt` (a `ValueError`). MCP `crier_publish` is fenced
+the same way: step 1 reports any receipt as `preview.unrecorded_publication`
+(article_id/url), and step 2 calls `execute_or_recover(plan)`, which records from the
+receipt (`PublishOutcome.recovered`, `recovered: true` in the result) instead of
+publishing again. MCP has no failure row to compare, so any receipt counts there.
 
 `awaiting_confirmation` is not a successful remote write. Preserve CLI manual
 confirmation, but automated callers must report the required manual action.

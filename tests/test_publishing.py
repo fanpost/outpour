@@ -364,3 +364,38 @@ def test_recovery_metadata_error_never_hides_remote_success(recording_platform, 
     assert outcome.article_id == 'remote-1'
     assert 'registry unavailable' in outcome.error
     assert 'configuration unreadable' in outcome.error
+
+
+def test_execute_or_recover_replays_receipt_without_remote_write(
+    recording_platform, tmp_path, monkeypatch
+):
+    from crier.publishing import (
+        PublicationState,
+        PublishRequest,
+        execute_or_recover,
+        prepare_request,
+        publish_and_record,
+    )
+    from crier.registry import get_publication_id
+    md = tmp_path / 'live.md'
+    md.write_text('---\ntitle: Live\n---\nBody.')
+    def unavailable(**kwargs):
+        raise RuntimeError('db down')
+    with monkeypatch.context() as patcher:
+        patcher.setattr('crier.registry.record_publication', unavailable)
+        assert publish_and_record(PublishRequest(md, 'test_platform')).remote_success
+    outcome = execute_or_recover(prepare_request(PublishRequest(md, 'test_platform')))
+    assert outcome.recovered is True
+    assert outcome.state == PublicationState.RECORDED
+    assert outcome.url == 'https://remote/1'
+    assert len(recording_platform.articles) == 1
+    assert get_publication_id('live', 'test_platform') == 'remote-1'
+
+
+def test_execute_or_recover_without_receipt_publishes(recording_platform, tmp_path):
+    from crier.publishing import PublishRequest, execute_or_recover, prepare_request
+    md = tmp_path / 'fresh.md'
+    md.write_text('---\ntitle: Fresh\n---\nBody.')
+    outcome = execute_or_recover(prepare_request(PublishRequest(md, 'test_platform')))
+    assert outcome.success and outcome.recovered is False
+    assert len(recording_platform.articles) == 1

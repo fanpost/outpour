@@ -93,6 +93,8 @@ class PublishOutcome:
     request: PublishRequest | None = None
     recording_error: str | None = None
     state: PublicationState | None = None
+    # True when the outcome replays a recovery receipt instead of a new remote write.
+    recovered: bool = False
 
     def __post_init__(self):
         if self.state is None and self.requires_confirmation:
@@ -416,8 +418,24 @@ def recover_unrecorded(
         rewrite_author=receipt.rewrite_author,
         request=replace(request, source_file=Path(receipt.source_file)),
         state=PublicationState.PREVIEW if dry_run else PublicationState.REMOTE_SUCCEEDED,
+        recovered=True,
     )
     return outcome if dry_run else record_outcome(outcome)
+
+
+def execute_or_recover(plan: PublishPlan) -> PublishOutcome:
+    """Execute and record a prepared plan unless a receipt shows it is already live.
+
+    A confirmed publish has no failure row to compare against, so any receipt for
+    the source/platform counts (``failed_at=None``): it is evidence of a remote
+    write that must not be repeated. Unreadable receipts raise ``UnreadableReceipt``
+    and therefore also block the remote write.
+    """
+    if plan.request is not None:
+        recovered = recover_unrecorded(plan.request)
+        if recovered is not None:
+            return recovered
+    return record_outcome(execute_plan(plan))
 
 
 def publish_and_record(

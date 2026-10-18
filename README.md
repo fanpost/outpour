@@ -664,7 +664,9 @@ If a remote publish succeeds but registry recording fails, results include the
 remote ID/URL and `remote_published: true` where available. A recovery receipt beside the registry database retains the prepared article
 and remote result without credentials. When retrying an existing failure,
 `audit --retry` repairs recording from that receipt instead of posting again;
-unreadable receipts block retry. Schedules remain terminal `published` with an
+unreadable receipts block retry. The MCP `crier_publish` tool does the same: its
+preview reports the live post as `unrecorded_publication`, and confirming records
+it from the receipt (`recovered: true`) rather than publishing a duplicate. Schedules remain terminal `published` with an
 error; campaign cells become `published_unrecorded` and subsequent runs skip them.
 
 ## Custom Platforms

@@ -58,3 +58,15 @@ def test_failed_atomic_replacement_keeps_previous_receipt(tmp_registry, monkeypa
         save_receipt(receipt)
     assert load_receipt(source, "devto").article.title == "Original"
     assert not list(tmp_registry.glob(".*.recovery/.receipt-*"))
+
+
+@pytest.mark.parametrize("text", ["{bad json", '"string"', "[]", "{}", '{"version": 2}'])
+def test_unreadable_receipt_raises_typed_error(tmp_registry, text):
+    from crier.publication_receipts import UnreadableReceipt, _path
+
+    source = tmp_registry / "post.md"
+    path = _path(source, "devto")
+    path.parent.mkdir(parents=True)
+    path.write_text(text)
+    with pytest.raises(UnreadableReceipt):
+        load_receipt(source, "devto")

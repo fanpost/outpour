@@ -583,109 +583,33 @@ def crier_check(
 # ============================================================================
 
 
-def _prepare_publish(
-    file_path: str,
-    platform: str,
-    rewrite_content: str | None,
-):
-    """Validate inputs and load the article for crier_publish.
-
-    Shared by step 1 (preview + token) and step 2 (execute). Returns either
-    an error dict (caller should return it as-is) or a tuple of
-    ``(resolved_path, article, api_key, is_rewritten, posted_content)``.
-
-    The rewrite, when provided, is applied here so both branches see the
-    final Article that will be posted.
-    """
-    from .converters import parse_markdown_file
-    from .config import get_api_key, get_platform_mode
-
+def _prepare_publish(file_path: str, platform: str, rewrite_content: str | None,
+                     rewrite_author: str | None = None):
+    """Resolve a source and prepare one API publication without executing it."""
+    from .publishing import PublishRequest, RewriteOptions, prepare_request
     err = _validate_platform(platform)
     if err:
         return {"error": err}
-
     resolved = _resolve_file(file_path)
     if not resolved:
         return {"error": f"File not found: {file_path}"}
-
-    try:
-        article = parse_markdown_file(str(resolved))
-    except Exception as e:
-        return {"error": f"Failed to parse {file_path}: {e}"}
-
-    if not article.title:
-        return {"error": "Article has no title"}
-
-    api_key = get_api_key(platform)
-    if not api_key:
-        return {"error": f"No API key configured for {platform}"}
-
-    mode = get_platform_mode(platform)
-    if mode != "api":
-        return {"error": f"{platform} is in {mode} mode (not API). Use CLI for manual/import."}
-
-    is_rewritten = bool(rewrite_content)
-    posted_content = rewrite_content
-    if rewrite_content:
-        from .rewrite import apply_rewrite
-        article = apply_rewrite(article, rewrite_content)
-
-    return resolved, article, api_key, is_rewritten, posted_content
+    plan = prepare_request(PublishRequest(resolved, platform, rewrite=RewriteOptions(
+        content=rewrite_content, author=rewrite_author)))
+    return {"error": plan.error} if plan.error else plan
 
 
-def _execute_publish(
-    resolved: Path,
-    article,
-    platform: str,
-    api_key: str,
-    is_rewritten: bool,
-    posted_content: str | None,
-    rewrite_author: str | None,
-) -> dict:
-    """Run the platform publish call and record the outcome.
-
-    Delegates the publish to crier.publishing.publish_one (the shared
-    orchestrator) and records the result here. The article/api_key/rewrite
-    inputs were already resolved by _prepare_publish; we pass the file path
-    and the explicit rewrite so publish_one re-derives the same Article.
-    """
-    from .publishing import publish_one
-    from .registry import record_failure, record_publication
-
-    canonical = article.canonical_url
-
-    outcome = publish_one(
-        str(resolved), platform,
-        rewrite_content=posted_content if is_rewritten else None,
-        rewrite_author=rewrite_author,
-    )
-    result = outcome.result
-
-    if not result.success:
-        if result.error:
-            record_failure(canonical, platform, result.error, article.title, str(resolved))
-        return {"error": f"Publish failed: {result.error}"}
-
-    if article is not None:
-        record_publication(
-            canonical_url=canonical,
-            platform=platform,
-            article_id=result.article_id,
-            url=result.url,
-            title=article.title,
-            source_file=str(resolved),
-            rewritten=is_rewritten,
-            rewrite_author=rewrite_author,
-            posted_content=posted_content,
-        )
-
-    return {
-        "success": True,
-        "platform": platform,
-        "title": article.title,
-        "article_id": result.article_id,
-        "url": result.url,
-    }
+def _execute_publish(plan) -> dict:
+    """Execute and record the prepared snapshot without rereading its source."""
+    from .publishing import execute_plan, record_outcome
+    outcome = record_outcome(execute_plan(plan))
+    if not outcome.success:
+        if outcome.remote_success:
+            return {"error": f"Published remotely but registry recording failed: {outcome.error}",
+                    "remote_published": True, "article_id": outcome.article_id,
+                    "url": outcome.url}
+        return {"error": f"Publish failed: {outcome.error}"}
+    return {"success": True, "platform": plan.platform, "title": outcome.article.title,
+            "article_id": outcome.article_id, "url": outcome.url}
 
 
 @mcp.tool()
@@ -729,22 +653,18 @@ def crier_publish(
         prepared = _prepare_publish(
             details["file"],
             details["platform"],
-            details.get("rewrite_content"),
+            details.get("rewrite_content"), details.get("rewrite_author"),
         )
         if isinstance(prepared, dict):
             return prepared
-        resolved, article, api_key, is_rewritten, posted_content = prepared
-
-        return _execute_publish(
-            resolved, article, details["platform"], api_key,
-            is_rewritten, posted_content, details.get("rewrite_author"),
-        )
+        return _execute_publish(prepared)
 
     # Step 1 / dry_run: validate, build preview, optionally mint a token.
-    prepared = _prepare_publish(file_path, platform, rewrite_content)
+    prepared = _prepare_publish(file_path, platform, rewrite_content, rewrite_author)
     if isinstance(prepared, dict):
         return prepared
-    resolved, article, _api_key, is_rewritten, _posted = prepared
+    resolved, article = prepared.request.source_file, prepared.article
+    is_rewritten = prepared.rewritten
 
     from .registry import is_published
     canonical = article.canonical_url

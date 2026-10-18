@@ -765,42 +765,24 @@ class TestCrierStatsRefresh:
         assert result["count"] == 0
 
 
-def test_execute_publish_delegates_to_publish_one(monkeypatch, tmp_path):
-    """_execute_publish uses publish_one for the platform call."""
+def test_confirmed_publish_reads_source_once(recording_platform, tmp_path, monkeypatch):
+    from crier.registry import get_publication_id
+    md = tmp_path / 'once.md'
+    md.write_text('---\ntitle: Once\n---\nPrepared body.')
+    preview = crier_publish(str(md), 'test_platform')
+    reads = []
     from pathlib import Path
-
-    from crier.platforms.base import Article, PublishResult
-    import crier.mcp_server as mcp_server
-
-    # Set up an isolated registry so record_publication works
-    db_path = tmp_path / "crier.db"
-    monkeypatch.setenv("CRIER_DB", str(db_path))
-    reset_connection()
-    init_db(db_path)
-
-    called = {}
-
-    def fake_publish_one(file_path, platform, **kwargs):
-        called["file_path"] = file_path
-        called["platform"] = platform
-        from crier.publishing import PublishOutcome
-        return PublishOutcome(
-            result=PublishResult(success=True, platform=platform,
-                                 article_id="99", url="https://x/99"),
-            article=Article(title="T", body="b",
-                            canonical_url="https://example.com/p/"),
-        )
-
-    monkeypatch.setattr("crier.publishing.publish_one", fake_publish_one)
-
-    art = Article(title="T", body="b", canonical_url="https://example.com/p/")
-    out = mcp_server._execute_publish(
-        Path("p.md"), art, "devto", "key", False, None, None,
-    )
-    assert out["success"] is True
-    assert called["platform"] == "devto"
-
-    reset_connection()
+    original = Path.read_text
+    def read(path, *args, **kwargs):
+        if path == md:
+            reads.append(path)
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', read)
+    result = crier_publish('ignored.md', 'ignored', confirmation_token=preview['confirmation_token'])
+    assert result['success']
+    assert len(reads) == 1
+    assert recording_platform.articles[0].body == 'Prepared body.'
+    assert get_publication_id('once', 'test_platform') == 'remote-1'
 
 
 @pytest.mark.parametrize('success', [True, False])

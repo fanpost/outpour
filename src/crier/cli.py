@@ -4196,210 +4196,51 @@ def schedule_run(dry_run: bool, json_output: bool):
     success_count = 0
     fail_count = 0
 
+    from .publishing import (
+        PublishRequest, RewriteOptions, ThreadOptions, publish_and_record,
+    )
+    from .scheduler import resolve_scheduled_source
+
     for post in due_posts:
-        # Check file exists
-        from .scheduler import resolve_scheduled_source
-        file_path = resolve_scheduled_source(post.file_path)
-        if not file_path.exists():
-            update_scheduled_post(post.id, status="failed", error="Source file not found")
-            results.append({"id": post.id, "success": False, "error": "Source file not found"})
-            fail_count += 1
-            if not json_output:
-                console.print(f"[red]✗[/red] {post.id}: Source file not found")
-            continue
-
-        # Parse article
+        outcome = None
         try:
-            article = parse_markdown_file(str(file_path))
-        except Exception as e:
-            update_scheduled_post(post.id, status="failed", error=str(e))
-            results.append({"id": post.id, "success": False, "error": str(e)})
+            file_path = resolve_scheduled_source(post.file_path)
+            if not file_path.exists():
+                raise RuntimeError("Source file not found")
+            outcome = publish_and_record(PublishRequest(
+                file_path, post.platform, draft=post.draft,
+                rewrite=RewriteOptions(
+                    content=post.rewrite, author=post.rewrite_author,
+                    auto=post.auto_rewrite, retry_count=post.auto_rewrite_retry,
+                    truncate=post.auto_rewrite_truncate,
+                    temperature=post.temperature, model=post.model),
+                thread=ThreadOptions(post.thread, post.thread_style)),
+                silent=json_output, console=console)
+            error = outcome.error
+            success = outcome.success
+            status = "published" if outcome.remote_success else "failed"
+        except Exception as exc:
+            success, status, error = False, "failed", str(exc)
+        update_scheduled_post(post.id, status=status, error=error)
+        item = {"id": post.id, "success": success, "platform": post.platform}
+        if outcome is not None:
+            item["url"] = outcome.url
+            if outcome.thread_ids:
+                item["thread_ids"] = outcome.thread_ids
+            if outcome.recording_error:
+                item["remote_published"] = outcome.remote_success
+        if error:
+            item["error"] = error
+        results.append(item)
+        if success:
+            success_count += 1
+        else:
             fail_count += 1
-            if not json_output:
-                console.print(f"[red]✗[/red] {post.id}: {e}")
-            continue
-
-        if post.draft:
-            article.published = False
-
-        # Get platform
-        platform_name = post.platform
-        if platform_name not in PLATFORMS:
-            err = f"Unknown platform: {platform_name}"
-            update_scheduled_post(post.id, status="failed", error=err)
-            results.append({"id": post.id, "success": False, "error": err})
-            fail_count += 1
-            if not json_output:
-                console.print(f"[red]✗[/red] {post.id}: Unknown platform {platform_name}")
-            continue
-
-        api_key = get_api_key(platform_name)
-        if not api_key:
-            err = f"No API key for {platform_name}"
-            update_scheduled_post(post.id, status="failed", error=err)
-            results.append({"id": post.id, "success": False, "error": err})
-            fail_count += 1
-            if not json_output:
-                console.print(f"[red]✗[/red] {post.id}: No API key for {platform_name}")
-            continue
-
-        # Handle rewrite if specified.
-        # Use apply_rewrite so is_rewrite=True is set; short-form platforms
-        # branch on that flag and would otherwise discard the body.
-        is_rewritten = bool(post.rewrite)
-        posted_content = post.rewrite
-        rewrite_author = post.rewrite_author
-        if post.rewrite:
-            article = apply_rewrite(article, post.rewrite)
-        elif post.auto_rewrite:
-            # The entry asked for an LLM rewrite at publish time. Never
-            # fall through silently: publishing the unrewritten body to a
-            # short-form platform is exactly what the user opted out of.
-            # Everything here is fallible (LLM gateway, platform ctor), so
-            # any failure marks THIS post failed and the loop continues;
-            # an escaped exception would strand the remaining claimed
-            # posts in "publishing" until the stale-claim timeout.
-            try:
-                from .config import (
-                    is_llm_configured,
-                    get_llm_config,
-                    get_llm_retry_count,
-                    get_llm_truncate_fallback,
-                )
-
-                if not is_llm_configured():
-                    raise RuntimeError(
-                        "auto_rewrite requested but no LLM is configured"
-                        " (set OPENAI_API_KEY or crier config llm set ...)"
-                    )
-
-                from .llm import get_provider
-                from .rewrite import auto_rewrite_for_platform
-
-                llm_provider = get_provider(
-                    get_llm_config(),
-                    temperature=post.temperature,
-                    model=post.model,
-                )
-                if llm_provider is None:
-                    raise RuntimeError(
-                        "auto_rewrite requested but the LLM provider"
-                        " could not be initialized (check llm config)"
-                    )
-
-                platform_cls = get_platform(platform_name)
-                max_len = platform_cls(api_key).max_content_length
-                if max_len and len(article.body) > max_len:
-                    retry = (
-                        post.auto_rewrite_retry
-                        if post.auto_rewrite_retry is not None
-                        else get_llm_retry_count()
-                    )
-                    truncate = (
-                        post.auto_rewrite_truncate
-                        if post.auto_rewrite_truncate is not None
-                        else get_llm_truncate_fallback()
-                    )
-                    rw = auto_rewrite_for_platform(
-                        article, platform_name, max_len, llm_provider,
-                        retry_count=retry,
-                        truncate_fallback=truncate,
-                        silent=json_output, console=console,
-                    )
-                    if not rw.success:
-                        raise RuntimeError(
-                            rw.error or "auto-rewrite failed"
-                        )
-                    article = rw.article
-                    is_rewritten = True
-                    posted_content = rw.rewrite_text
-                    rewrite_author = f"llm:{llm_provider.model}"
-            except Exception as e:
-                err = str(e)
-                update_scheduled_post(post.id, status="failed", error=err)
-                results.append({"id": post.id, "success": False, "error": err})
-                fail_count += 1
-                if not json_output:
-                    console.print(f"[red]✗[/red] {post.id}: {err}")
-                continue
-
-        # Publish
-        try:
-            platform_cls = get_platform(platform_name)
-            platform = platform_cls(api_key)
-
-            if post.thread and not platform.supports_threads:
-                raise RuntimeError(
-                    f"{platform_name} does not support thread posting"
-                )
-
-            thread_result = None
-            if post.thread:
-                from .threading import split_into_thread
-
-                thread_posts = split_into_thread(
-                    article.body,
-                    max_length=platform.max_content_length or 300,
-                    style=post.thread_style,
-                    max_posts=platform.thread_max_posts,
-                )
-                if len(thread_posts) > 1:
-                    tr = platform.publish_thread(thread_posts)
-                    from .platforms.base import PublishResult
-                    thread_result = tr
-                    result = PublishResult(
-                        success=tr.success, platform=platform_name,
-                        article_id=tr.root_id, url=tr.root_url, error=tr.error,
-                    )
-                else:
-                    result = platform.publish(article)
+        if not json_output:
+            if success:
+                console.print(f"[green]✓[/green] {post.id}: Published to {post.platform}")
             else:
-                result = platform.publish(article)
-
-            if result.success:
-                update_scheduled_post(post.id, status="published")
-
-                # Keep all remote IDs so later deletion can address the full thread.
-                if thread_result is not None:
-                    record_thread_publication(
-                        article.canonical_url, platform_name,
-                        thread_result.root_id, thread_result.root_url,
-                        thread_result.post_ids or [], thread_result.post_urls,
-                        title=article.title, source_file=str(file_path),
-                        rewritten=is_rewritten, rewrite_author=rewrite_author,
-                    )
-                else:
-                    record_publication(
-                        canonical_url=article.canonical_url,
-                        platform=platform_name, article_id=result.article_id,
-                        url=result.url, title=article.title, source_file=str(file_path),
-                        rewritten=is_rewritten,
-                        rewrite_author=rewrite_author if is_rewritten else None,
-                        posted_content=posted_content if is_rewritten else None,
-                    )
-
-                results.append({
-                    "id": post.id,
-                    "success": True,
-                    "platform": platform_name,
-                    "url": result.url,
-                })
-                success_count += 1
-                if not json_output:
-                    console.print(f"[green]✓[/green] {post.id}: Published to {platform_name}")
-            else:
-                update_scheduled_post(post.id, status="failed", error=result.error)
-                results.append({"id": post.id, "success": False, "error": result.error})
-                fail_count += 1
-                if not json_output:
-                    console.print(f"[red]✗[/red] {post.id}: {result.error}")
-
-        except Exception as e:
-            update_scheduled_post(post.id, status="failed", error=str(e))
-            results.append({"id": post.id, "success": False, "error": str(e)})
-            fail_count += 1
-            if not json_output:
-                console.print(f"[red]✗[/red] {post.id}: {e}")
+                console.print(f"[red]✗[/red] {post.id}: {error}")
 
     if json_output:
         output = {

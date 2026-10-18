@@ -3613,3 +3613,22 @@ class TestScheduleRunFullOptions:
         article_arg = mock_pub.call_args[0][0]
         assert article_arg.published is False
         assert load_schedule()["scheduled_posts"][0]["status"] == "published"
+
+
+def test_schedule_recording_error_does_not_republish(recording_platform, tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from crier.scheduler import create_scheduled_post, load_schedule
+    md = tmp_path / 'scheduled.md'
+    md.write_text('---\ntitle: Scheduled\n---\nBody.')
+    create_scheduled_post(str(md), 'test_platform', datetime.now(timezone.utc) - timedelta(minutes=1))
+    def broken(**kw):
+        raise RuntimeError('registry unavailable')
+    monkeypatch.setattr('crier.registry.record_publication', broken)
+    monkeypatch.setattr('crier.cli.record_publication', broken)
+    first = CliRunner().invoke(cli, ['schedule', 'run', '--json'])
+    assert first.exit_code == 1
+    entry = load_schedule()['scheduled_posts'][0]
+    assert entry['status'] == 'published'
+    assert entry['error']
+    CliRunner().invoke(cli, ['schedule', 'run', '--json'])
+    assert len(recording_platform.articles) == 1

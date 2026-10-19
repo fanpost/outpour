@@ -73,6 +73,8 @@ pip install crier
 | **Buttondown** | `api_key` | Newsletter publishing |
 | **Bluesky** | `handle:app_password` | Short posts with link cards |
 | **Mastodon** | `instance:access_token` | Toots with hashtags |
+| **Pleroma** | `instance:access_token` | Mastodon-compatible API; also works for Akkoma |
+| **Nostr** | `nsec1...` or hex key, optionally `nsec1...\|wss://relay.a,wss://relay.b` | Signed notes to relays; needs `pip install 'crier[nostr]'` |
 | **Threads** | `user_id:access_token` | Short posts (no edit support) |
 | **Telegram** | `bot_token:chat_id` | Channel/group posts |
 | **Discord** | `webhook_url` | Server announcements |
@@ -674,35 +676,57 @@ error; campaign cells become `published_unrecorded` and subsequent runs skip the
 Extend crier with your own platforms by dropping a `.py` file in `~/.config/crier/platforms/`:
 
 ```python
-# ~/.config/crier/platforms/nostr.py
-from crier.platforms.base import Platform, Article, PublishResult
+# ~/.config/crier/platforms/myblog.py
+from crier.platforms.base import Article, Platform, PublishResult
 
-class Nostr(Platform):
-    name = "nostr"
-    description = "Publish to Nostr relays"
 
-    def publish(self, article):
-        # Your publish logic here
-        return PublishResult(url="...", platform_id="...")
+class MyBlog(Platform):
+    name = "myblog"
+    description = "Publish to my self-hosted blog API"
+    max_content_length = None  # set an int (and is_short_form = True) for short-form limits
+    supports_delete = False
 
-    def update(self, article_id, article):
-        pass
+    base_url = "https://blog.example.com/api"
 
-    def list_articles(self, limit=10):
+    def publish(self, article: Article) -> PublishResult:
+        # retry_request adds timeouts and backoff for 429/5xx responses
+        resp = self.retry_request(
+            "post",
+            f"{self.base_url}/posts",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "title": article.title,
+                "body": article.body,
+                "canonical_url": article.canonical_url,
+            },
+        )
+        if resp.status_code not in (200, 201):
+            return PublishResult(
+                success=False, platform=self.name, error=f"{resp.status_code}: {resp.text}"
+            )
+        data = resp.json()
+        return PublishResult(
+            success=True, platform=self.name, article_id=str(data["id"]), url=data["url"]
+        )
+
+    def update(self, article_id: str, article: Article) -> PublishResult:
+        return PublishResult(success=False, platform=self.name, error="update not supported")
+
+    def list_articles(self, limit: int = 10) -> list[dict]:
         return []
 
-    def get_article(self, article_id):
+    def get_article(self, article_id: str) -> dict | None:
         return None
 ```
 
 Then configure your API key:
 
 ```bash
-crier config set platforms.nostr.api_key <your-key>
-crier publish article.md --to nostr
+crier config set platforms.myblog.api_key <your-key>
+crier publish article.md --to myblog
 ```
 
-User plugins override built-in platforms with the same name. Files starting with `_` are skipped. Broken plugins emit a warning but don't crash crier.
+Pick a `name` that does not collide with a built-in platform (`crier platforms` lists them): a user plugin with the same name as a built-in replaces it. Files starting with `_` are skipped. Broken plugins emit a warning but don't crash crier.
 
 ## License
 

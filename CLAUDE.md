@@ -4,701 +4,109 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Crier is a CLI tool for cross-posting content to multiple platforms. It reads markdown files with YAML or TOML front matter and publishes them via platform APIs. Designed to be used with Claude Code for automated content distribution.
+Crier cross-posts Markdown content (YAML or TOML front matter) to platform APIs and tracks every publication in a SQLite registry. Two front ends share one core: a Click CLI (`crier ...`) and an MCP server (`crier mcp`) that Claude Code drives through the companion crier plugin.
+
+User-facing usage (every command, flag, config key, and API-key format) lives in README.md and `crier <command> --help`. This file covers the architecture and the invariants that no single file makes obvious.
 
 ## Development Commands
 
 ```bash
-# Install in development mode with dev dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Run tests with coverage
-pytest --cov=crier
-
-# Run a single test
-pytest tests/test_file.py::test_function -v
-
-# Lint
-ruff check src/
-
-# Format check
-ruff format --check src/
+pip install -e ".[dev,mcp,nostr]"   # mcp is required: tests/test_mcp.py imports the server
+pytest                              # full suite; live HTTP is blocked by a fixture
+pytest tests/test_publishing.py::test_name -v
+pytest -k reconcile -v
+pytest --cov=crier --cov-report=term-missing
+ruff check src/ tests/              # rule set pinned in pyproject [tool.ruff.lint]
+pip wheel . --no-deps -w dist/      # Hatchling build; src/crier/SKILL.md is force-included
 ```
+
+Python >= 3.10 (`tomli` backfills `tomllib` on 3.10). Ruff line length is 100. `ruff format` has never been applied repo-wide, so `ruff format --check` reports many files; it is not an enforced gate, and running it would reformat unrelated code. Commit messages follow `feat(scope): ...`, `fix(scope): ...`, `refactor(scope): ...`.
 
 ## Architecture
 
-**CLI Layer** (`cli.py`): Click-based commands that orchestrate the workflow:
-- `init` — Interactive setup wizard
-- `publish` — Publish to platforms (supports `--dry-run`, `--profile`, `--manual`, `--rewrite`, `--auto-rewrite`, `--batch`, `--json`, `--schedule`, `--thread`, `--no-check`, `--strict`)
-- `check` — Pre-publish content validation (supports `--to`, `--all`, `--json`, `--strict`, `--check-links`)
-- `status` — Show publication status for files
-- `audit` — Check what's missing (supports bulk operations with filters, `--batch`, `--json`, `--include-archived`, `--check`, `--failed`, `--retry`)
-- `search` — Search and list content with metadata (supports `--tag`, `--since`, `--until`, `--sample`, `--json`)
-- `delete` — Delete content from platforms (`--from`, `--all`, `--dry-run`)
-- `archive` / `unarchive` — Exclude/include content from audit --publish
-- `schedule` — Manage scheduled posts (`list`, `show`, `cancel`, `run`)
-- `stats` — View engagement statistics (`--refresh`, `--top`, `--since`, `--json`, `--compare`, `--export`)
-- `feed` — Generate RSS/Atom feeds from content files (`--format`, `--output`, `--limit`, `--tag`)
-- `doctor` — Validate API keys (`--json`)
-- `config` — Manage API keys, profiles, and content paths (`set`, `get`, `show`, `profile`, `path`, `llm`)
-- `skill` — Manage Claude Code skill installation (deprecated -- use crier plugin from queelius-plugins marketplace)
-- `register` / `unregister` — Manual registry management
-- `reconcile`: Diff live platform state vs registry; backfill untracked, soft-delete gone (`--apply`, `--limit`, `--json`; dry-run by default)
-- `campaign`: Manifest-driven bulk publish (`plan` writes a YAML manifest of missing cells under `<site_root>/.crier/campaigns/`; `run --apply` publishes pending cells via `publish_one`, resumable). Short-form cells carry a `rewrite` field to fill before running.
-- `list` — List articles on a platform (default: registry; `--remote` for live API)
-- `mcp` — Start MCP server for Claude Code integration (`--http` for SSE mode)
-
-**LLM Module** (`llm/`): Optional auto-rewrite using OpenAI-compatible APIs:
-- `provider.py`: Abstract `LLMProvider` interface and `RewriteResult` dataclass
-- `openai_compat.py`: `OpenAICompatProvider` for OpenAI, Ollama, Groq, etc.
-
-**Platform Abstraction** (`platforms/`):
-- `base.py`: Abstract `Platform` class defining the interface (`publish`, `update`, `list_articles`, `get_article`, `delete`, `get_stats`, `publish_thread`) and core data classes (`Article`, `PublishResult`, `DeleteResult`, `ArticleStats`, `ThreadPublishResult`)
-- `base.py` also provides `retry_request()` — centralized HTTP retry with exponential backoff, Retry-After header parsing, and retryable/non-retryable status code classification
-- Platform capabilities: `supports_delete`, `supports_stats`, `supports_threads`, `thread_max_posts`
-- Each platform implements the `Platform` interface; all use `self.retry_request()` instead of direct `requests.*()` calls
-- `_discover_package_platforms()` in `__init__.py` auto-discovers built-in platforms by scanning `.py` files in the package (no hardcoded imports)
-- `_discover_user_platforms()` loads user plugins from `~/.config/crier/platforms/`; user plugins override built-ins
-- `PLATFORMS` registry in `__init__.py` maps platform names to classes (built-in + user plugins)
-- Backward compat: `globals()` injection ensures `from crier.platforms import DevTo` etc. still work
-
-**Scheduler** (`scheduler.py`): Content scheduling for future publication:
-- `ScheduledPost` dataclass for scheduled post data
-- Schedule storage in `<site_root>/.crier/schedule.yaml`
-- Natural language time parsing via `dateparser`
-
-**Checker** (`checker.py`): Pre-publish content validation:
-- `CheckResult` and `CheckReport` dataclasses for validation findings
-- `check_article()` — Pure validation (no I/O): front matter, content, platform-specific checks
-- `check_file()` — I/O wrapper that reads file and calls `check_article()`
-- `check_external_links()` — Optional external URL validation via HEAD requests
-- Configurable severity overrides in `~/.config/crier/config.yaml` `checks:` section
-- Integrated into `publish` (pre-publish gate) and `audit` (filter with `--check`)
-
-**Threading** (`threading.py`): Thread splitting for social platforms:
-- `split_into_thread()` splits content by manual markers, paragraphs, or sentences
-- `format_thread()` adds thread indicators (numbered, emoji, or simple style)
-- Used by Bluesky and Mastodon `publish_thread()` implementations
-
-**Platform Categories** (15 total):
-- Blog: devto, hashnode, medium, ghost, wordpress
-- Newsletter: buttondown
-- Social: bluesky, mastodon, pleroma, nostr, linkedin, threads, twitter (copy-paste mode)
-- Announcement: telegram, discord
-
-A browser-automation platform base (Substack via Playwright) was built and then removed on 2026-06-21: Substack returns HTTP 403 on the note-write endpoint from an automated session, and the other candidates (X, Hacker News, Lobsters) are either equally anti-automation-hardened or community-inappropriate for automated posting. crier is API-only by design; non-API platforms are out of scope rather than driven by brittle browser automation. The attempt is preserved in docs/superpowers/specs/2026-06-07-browserplatform-base-design.md and the matching plan for historical reference.
-
-Nostr (`platforms/nostr.py`) publishes secp256k1/Schnorr-signed kind-1 notes to relays over websockets via the optional `[nostr]` extra (pynostr). The signing import is deferred to publish/delete so the platform stays importable without the extra. api_key is the private key (`nsec1...` or hex), optionally `nsec1...|wss://relay.a,wss://relay.b` for custom relays (default relays otherwise). Nostr has no authoritative cross-relay listing, so `list_articles`/`get_article` return empty/None (reconcile/stats do not apply); notes are immutable (no update); delete is best-effort NIP-09 (kind 5). It is a WebSocket platform, so it does not use `retry_request`.
-
-Mastodon and Pleroma both inherit from `FediversePlatform` (defined in `platforms/_fediverse.py`) which encapsulates the Mastodon-API-compatible REST protocol. The leading underscore on the module name keeps the base class out of platform auto-discovery; only its concrete subclasses (each with their own `name`, `default_instance`, and `max_content_length`) get registered. Adding Akkoma, GoToSocial, or another Mastodon-API-compatible server is a ~10-line subclass.
-
-**Config** (`config.py`): Single global configuration:
-- **Global** (`~/.config/crier/config.yaml`): ALL configuration -- API keys, profiles, content paths, site settings
-- `site_root` key locates the content project directory (e.g., `~/github/repos/my-blog`)
-- No local `.crier/config.yaml` -- no merge logic
-- Precedence: global config < environment variables (`CRIER_{PLATFORM}_API_KEY`, `CRIER_DB`) < CLI args
-- Supports composable profiles (profiles can reference other profiles)
-
-Example global config structure:
-```yaml
-site_root: ~/github/repos/my-blog
-site_base_url: https://example.com
-content_paths:
-  - content/post
-  - content/note
-file_extensions:
-  - .md
-  - .markdown
-exclude_patterns:
-  - _drafts/*
-  - _index.md
-default_profile: blogs
-
-platforms:
-  devto:
-    api_key: sk-...
-  bluesky:
-    handle: user.bsky.social
-    app_password: ...
-
-profiles:
-  blogs:
-    platforms: [devto, hashnode, medium]
-  social:
-    platforms: [bluesky, mastodon]
-
-checks:
-  missing-tags: disabled
-  missing-date: error
-
-llm:
-  api_key: sk-...
-  model: gpt-4o-mini
+```
+  cli.py (Click)          mcp_server.py (FastMCP: 20 tools, 3 resources)
+          \                    /
+       publishing.py: prepare -> execute -> record
+        /             |                \
+  platforms/      registry.py        rewrite.py + llm/
+  (adapters)      (SQLite)           (manual and LLM rewrites)
 ```
 
-**Feed** (`feed.py`): RSS/Atom feed generation from content files:
-- `generate_feed()` — Builds RSS 2.0 or Atom XML from markdown files using `feedgen`
-- `_collect_items()` — Parses files and applies tag/date filters
-- Reuses `parse_markdown_file()`, `get_content_date()`, `get_content_tags()`
-
-**Registry** (`registry.py`): SQLite database at `~/.config/crier/crier.db` (global, single file for all projects).
-- **Slug primary key** derived from title via `python-slugify` (not canonical_url). Slug is stable; if the title changes, the slug stays.
-- `canonical_url` is optional metadata, not the identity. A unique index allows lookup but it can be `NULL`.
-- **No content hashes**. Change detection was removed entirely. If content is outdated, re-publish manually.
-- **`_resolve_slug(conn, key)`** is the dispatcher for the dual-key API: every public function accepts either a slug or a canonical_url. It tries the cheap primary-key lookup first, then the canonical_url unique index.
-- `get_or_create_slug(title, canonical_url, source_file)` finds or creates an article entry. Used everywhere a publication is recorded.
-- `update_article_metadata(slug, title, source_file, canonical_url, section)` is the public wrapper for editing article metadata. CLI's `link` command uses this; do NOT import the private `_update_article_metadata` from outside `registry.py`.
-- `record_failure()` / `get_failures()`: failure rows have `platform_id IS NULL`. Most queries filter `WHERE platform_id IS NOT NULL AND deleted_at IS NULL` to get "real" publications; remember this when writing new SQL against the registry.
-- **UPSERT on `record_publication` / `record_thread_publication` / `save_stats` / `record_failure`.** UPSERT (not `INSERT OR REPLACE`) is required because `INSERT OR REPLACE` deletes and reinserts the row, which cascade-deletes dependent stats and silently resets unspecified columns. The UPSERT clauses explicitly enumerate `deleted_at = NULL`, `last_error = NULL`, `is_thread`, `thread_ids`, `posted_content` so re-publishing a soft-deleted post resurrects it cleanly. See regression tests in `TestDeletionPreservesHistory`.
-- `CRIER_DB` env var overrides DB path (used for test isolation).
-- Module-level `_connection` cache; `reset_connection()` is required between tests with different DBs.
-- SQLite tables: `articles`, `publications`, `stats`, `schema_version`. WAL mode, foreign keys ON.
-- **YAML migration**: `migrate_yaml_to_sqlite(yaml_path, db_path)` migrates a v2 YAML registry to the SQLite schema; renames the YAML to `.bak`.
-
-**MCP Server** (`mcp_server.py`, ~1100 lines): Full CLI parity for Claude Code via Model Context Protocol.
-- Started via `crier mcp` (stdio) or `crier mcp --http` (SSE)
-- **20 tools** in 4 categories:
-  - Registry: `crier_query`, `crier_missing`, `crier_article`, `crier_publications`, `crier_record`, `crier_failures`, `crier_summary`, `crier_sql`, `crier_reconcile`
-  - Content: `crier_search`, `crier_check`
-  - Actions: `crier_publish`, `crier_delete`, `crier_archive`, `crier_campaign_plan`, `crier_campaign_run`
-  - Platform: `crier_list_remote`, `crier_doctor`, `crier_stats`, `crier_stats_refresh`
-- **3 resources**: `crier://schema`, `crier://config` (sanitized), `crier://platforms` (capabilities + modes)
-- **Two-step confirmation** for destructive ops (`crier_publish`, `crier_delete`, `crier_campaign_run`):
-  - Step 1: call without `confirmation_token` to get a preview + token (5-min TTL)
-  - Step 2: call with `confirmation_token` to execute
-  - `crier_campaign_run` step 2 reads the campaign `name` from the token (token-as-source-of-truth), so a bulk run cannot be redirected by caller args.
-  - **Critical invariant: step 2 treats the token as source of truth.** All parameters (file, platform, rewrite_content, key, target_platforms) come from the token. Caller args on step 2 are ignored. This prevents a token-substitution bypass where a caller could get a token for operation A and use it to authorize operation B. See `_create_token` / `_consume_token` in `mcp_server.py`.
-- `crier_sql` runs queries inside a `SAVEPOINT crier_sql_guard` that is always rolled back, so even non-SELECT statements have no effect (defense in depth on top of `startswith("SELECT")`).
-- All tools return **dicts** (FastMCP serializes them); validation errors return `{"error": "..."}`.
-- Tools use lazy imports (`from .X import Y` inside functions) for fast MCP startup and to avoid circular imports.
-- Built on `mcp.server.fastmcp.FastMCP`.
-
-**Converters** (`converters/markdown.py`): Parses markdown files with YAML or TOML front matter into `Article` objects. Automatically resolves relative links (e.g., `/posts/other/`) to absolute URLs using `site_base_url` so they work on cross-posted platforms.
-
-**Utils** (`utils.py`): Shared pure utility functions (no CLI dependencies):
-- `truncate_at_sentence()` — Smart text truncation at sentence/word boundaries
-- `find_content_files()` — Discover content files using config paths/patterns
-- `parse_date_filter()` — Parse relative/absolute date strings
-- `get_content_date()` / `get_content_tags()` — Extract front matter metadata
-
-**Rewrite** (`rewrite.py`): Auto-rewrite orchestration for platform content adaptation:
-- `auto_rewrite_for_platform()` — LLM retry loop with configurable retries and truncation fallback
-- `AutoRewriteResult` dataclass for structured success/failure results
-
-**Skill** (`skill.py`): Claude Code skill installation (deprecated). Loads `SKILL.md` from package resources and installs to `~/.claude/skills/crier/`. Superseded by the crier Claude Code plugin available from the queelius-plugins marketplace.
-
-**Crier Plugin** (separate repo at `~/github/alex-claude-plugins/crier/`): the user-facing Claude Code integration. Composed of:
-- `skills/crier/SKILL.md`: judgment context (rewrite voice, platform culture). Intentionally short (~90 lines); MCP tools are self-describing so the skill doesn't repeat the CLI reference.
-- `commands/crier.md`: the `/crier` slash command for interactive workflows.
-- `agents/cross-poster.md`: autonomous bulk-publishing agent. Calls MCP tools directly (not Bash).
-- `agents/auditor.md`: read-only analysis agent (gap analysis, performance review, staleness, failure triage).
-- `.mcp.json`: registers the `crier mcp` stdio server with the plugin.
-
-## Key Features
-
-- **Dry run mode**: Preview before publishing with `--dry-run`
-- **Publishing profiles**: Group platforms (e.g., `--profile blogs`)
-- **Publication tracking**: SQLite registry tracks what's been published where (slug-keyed)
-- **MCP server**: `crier mcp` exposes registry to Claude Code for queries and automation
-- **Audit & bulk publish**: Find and publish missing content with `audit --publish`
-- **Bulk operation filters**:
-  - `--only-api` — Skip manual/import platforms
-  - `--long-form` — Skip short-form platforms (bluesky, mastodon, twitter, threads)
-  - `--tag <tag>` — Only include content with matching tags (case-insensitive, OR logic)
-  - `--sample N` — Random sample of N items
-  - `--include-archived` — Include archived content
-  - `--since` / `--until` — Date filtering (supports `1d`, `1w`, `1m`, `1y` or `YYYY-MM-DD`)
-- **Manual mode**: Copy-paste mode for platforms without API access (`--manual` or `api_key: manual`)
-- **Import mode**: URL import for platforms like Medium (`api_key: import`)
-- **Rewrites**: Custom short-form content with `--rewrite` for social platforms
-- **Auto-rewrite**: LLM-generated rewrites with `--auto-rewrite` (requires LLM config)
-- **Batch mode**: Non-interactive automation with `--batch` (implies `--yes --json`, skips manual platforms)
-- **JSON output**: Machine-readable output with `--json` for CI/CD integration
-- **Doctor**: Validate all API keys work (`--json` for scripting)
-- **RSS/Atom feeds**: Generate feeds from content with `crier feed` (`--format atom`, `--output`, `--limit`, `--tag`)
-- **Retry & rate limiting**: All platform API calls use centralized retry with exponential backoff (429, 502-504, timeouts)
-- **Error tracking**: Failed publications are recorded and can be retried with `audit --retry`
-- **SQLite registry**: WAL-mode SQLite with slug primary keys (no YAML, no content hashes)
-- **Stats comparison**: `crier stats --compare` shows cross-platform engagement side-by-side
-- **Relative link resolution**: Converts relative links (`/posts/other/`, `../images/`) to absolute URLs using `site_base_url`
-- **Delete/Archive**: Remove content from platforms (`crier delete`) or exclude from audit (`crier archive`)
-- **Scheduling**: Schedule posts for future publication with `--schedule` or `crier schedule` commands
-- **Analytics**: Track engagement stats across platforms with `crier stats`
-- **Threading**: Split long content into threads for Bluesky/Mastodon with `--thread`
-
-## Automation Modes
-
-**Batch mode** (`--batch`): Fully automated, non-interactive publishing for CI/CD:
-```bash
-# Batch mode implies --yes --json, skips manual/import platforms
-crier publish article.md --to devto --to bluesky --batch
-crier audit --publish --batch --long-form
-```
-
-**JSON output** (`--json`): Machine-readable output for parsing:
-```bash
-crier publish article.md --to devto --json
-crier audit --json
-```
-
-**Quiet mode** (`--quiet`): Suppress non-essential output for scripting:
-```bash
-# Quiet mode suppresses progress/info messages
-crier publish article.md --to devto --quiet
-crier audit --publish --yes --quiet
-crier search --tag python --quiet
-```
-
-**Config access** (`config get`): Read config values programmatically:
-```bash
-crier config get llm.model
-crier config get platforms.devto.api_key
-crier config get site_base_url --json
-```
-
-**Non-interactive flags**:
-- `--yes` / `-y` — Skip confirmation prompts (available on `publish`, `audit --publish`, `register`)
-- `--quiet` / `-q` — Suppress non-essential output (available on `publish`, `audit`, `search`)
-
-**Auto-rewrite** (`--auto-rewrite`): LLM-generated short-form content:
-```bash
-# Configure LLM first (see LLM Configuration below)
-crier publish article.md --to bluesky --auto-rewrite
-
-# Preview rewrite with dry-run (invokes LLM, shows preview with char budget)
-crier publish article.md --to bluesky --auto-rewrite --dry-run
-
-# Disable auto-rewrite explicitly
-crier publish article.md --to bluesky --no-auto-rewrite
-
-# Retry up to 3 times if output exceeds character limit
-crier publish article.md --to bluesky --auto-rewrite --auto-rewrite-retry 3
-# Or use short form: -R 3
-
-# Truncate at sentence boundary if all retries fail
-crier publish article.md --to bluesky --auto-rewrite -R 3 --auto-rewrite-truncate
-
-# Override temperature (0.0-2.0, higher=more creative)
-crier publish article.md --to bluesky --auto-rewrite --temperature 1.2
-
-# Override model for this publish
-crier publish article.md --to bluesky --auto-rewrite --model gpt-4o
-```
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success - all operations completed |
-| 1 | Failure - operation failed or validation error |
-| 2 | Partial - some operations succeeded, some failed |
-
-```bash
-# Check exit code in scripts
-crier publish article.md --to devto --batch
-echo "Exit code: $?"
-
-# Example: retry on partial failure
-crier audit --publish --batch
-if [ $? -eq 2 ]; then
-  echo "Some platforms failed, retry needed"
-fi
-```
-
-## LLM Configuration
-
-For `--auto-rewrite` to work:
+Supporting modules: `campaign.py` (manifest-driven bulk publish), `reconcile.py` (live vs registry diff), `scheduler.py` (deferred publish), `checker.py` (pre-publish validation: pure `check_article`, I/O `check_file`), `threading.py` (thread splitting and formatting), `feed.py` (RSS/Atom via feedgen), `converters/markdown.py` (front matter parsing; rewrites relative links to absolute using `site_base_url`), `publication_receipts.py` (recovery receipts), `config.py`, `utils.py`. `cli.py` is a single ~5300-line file.
 
-**Simplest:** Just have `OPENAI_API_KEY` env var set (defaults to gpt-4o-mini).
-
-**Or configure in `~/.config/crier/config.yaml`:**
+### Publishing core (`publishing.py`)
 
-```yaml
-# Minimal (defaults to OpenAI + gpt-4o-mini)
-llm:
-  api_key: sk-...
+All automated API publishing runs through one pipeline with typed inputs (`PublishRequest`, `RewriteOptions`, `ThreadOptions`):
 
-# Full config for Ollama/other providers
-llm:
-  base_url: http://localhost:11434/v1
-  model: llama3
+1. `prepare_request(request, source_article=None)` resolves mode and API key, parses the source (or uses a supplied snapshot), applies a supplied rewrite or calls the LLM, and splits threads. It never publishes or records; problems come back on `PublishPlan.error`.
+2. `execute_plan(plan)` sends exactly the prepared article or thread and converts adapter exceptions into a failed result.
+3. `record_outcome(outcome)` owns every registry effect (success, thread, or failure row) and is a no-op on terminal states, so an outcome is recorded at most once.
 
-# Full config with retry and truncation defaults
-llm:
-  api_key: sk-...
-  base_url: https://api.openai.com/v1
-  model: gpt-4o-mini
-  temperature: 0.7          # Default: 0.7 (0.0-2.0, higher=more creative)
-  retry_count: 0            # Default: 0 (no retries)
-  truncate_fallback: false  # Default: false (no hard truncation)
-```
+`publish_and_record` composes the three; CLI publish, audit publish and retry, scheduled dispatch, and campaigns all call it. The MCP server calls the stages separately so step 1 of its two-step confirmation can preview a prepared plan; its step 2 executes through `execute_or_recover(plan)`. `prepare_publish`/`publish_one` are compatibility wrappers; `publish_one` executes WITHOUT recording and has no internal callers.
 
-**Set config via CLI:**
-```bash
-crier config llm set temperature 0.9
-crier config llm set retry_count 3
-crier config llm set truncate_fallback true
-```
+`PublishOutcome.state` is a `PublicationState` enum. Distinguish `remote_success` (the platform accepted the write) from `success` (remote write AND recording both succeeded). Do not convert outcomes into ad-hoc result classes, and do not record them again in a caller.
 
-**View and test LLM config:**
-```bash
-# View current LLM configuration
-crier config llm show
+- **Recording failure after a remote success** writes a recovery receipt (`publication_receipts.py`, a JSON file under `.<db name>.recovery/` beside the registry DB; no credentials). `audit --retry` replays it to repair the registry without reposting. A corrupt receipt raises `UnreadableReceipt` (a `ValueError`) and blocks remote retry; a receipt older than a newer failure is ignored. MCP is fenced the same way: step 1 reports any receipt as `preview.unrecorded_publication`, and `execute_or_recover` records from it (`PublishOutcome.recovered`) instead of publishing again. MCP has no failure row to compare, so any receipt counts there. Campaign cells become `published_unrecorded` (skipped by later runs); schedules stay terminal `published` with the error attached.
+- **`awaiting_confirmation`** (manual/import platforms) is not a successful write. Only the interactive CLI performs manual confirmation; automated callers report the required manual action.
+- **Rewrite attribution precedence:** explicit author, then `llm:<model>` for an actual LLM rewrite, then the configured default for supplied rewrite text. A supplied rewrite over the platform limit is rejected at preparation.
 
-# Test the LLM connection with a simple request
-crier config llm test
-```
+### Platforms (`platforms/`)
 
-**Environment variables** (override config):
-- `OPENAI_API_KEY` — API key (auto-defaults to OpenAI endpoint + gpt-4o-mini)
-- `OPENAI_BASE_URL` — Custom endpoint (e.g., `http://localhost:11434/v1` for Ollama)
+- `base.py` defines the abstract `Platform` (`publish`, `update`, `list_articles`, `get_article`; optional `delete`, `get_stats`, `publish_thread`), the result dataclasses, capability attributes (`is_short_form`, `max_content_length`, `supports_delete`, `supports_stats`, `supports_threads`, `thread_max_posts`), and `retry_request()` (exponential backoff, `Retry-After`, retryable vs non-retryable status codes). HTTP adapters use `self.retry_request()`, never `requests.*` directly.
+- Discovery: `_discover_package_platforms()` scans the package and `_discover_user_platforms()` loads `~/.config/crier/platforms/*.py` (user plugins override built-ins; broken plugins warn instead of crashing). Files starting with `_` are skipped, which is how shared bases stay unregistered. `PLATFORMS` maps name to class; there is no hardcoded registration list.
+- `_fediverse.py`: `FediversePlatform` implements the Mastodon-compatible REST API; `mastodon.py` and `pleroma.py` are ~30-line subclasses. Akkoma or GoToSocial would be the same shape.
+- `nostr.py`: Schnorr-signed kind-1 notes over websockets via the optional `[nostr]` extra (import deferred to publish/delete). No listing or update; delete is best-effort NIP-09. It does not use `retry_request`.
+- `bluesky.py`: AT Protocol. `detect_facets` emits link and hashtag facets as non-overlapping UTF-8 byte ranges; `list_articles` paginates `getAuthorFeed` (100 per page cap) and skips reposts.
+- Mode comes from the configured key, not the class: `get_platform_mode()` returns `api`, `manual` (`api_key: manual`, copy-paste), `import` (`api_key: import`, e.g. Medium), or `unconfigured`.
 
-## Bulk Operations
+crier is API-only by design. A Playwright browser-automation base (Substack) was built and removed on 2026-06-21: Substack rejects automated note writes with HTTP 403, and the other candidates (X, Hacker News, Lobsters) are equally hardened or inappropriate for automated posting. The spec and plan remain in `docs/superpowers/` as a record; do not reintroduce browser automation without revisiting that finding.
 
-Filter order: path → date → platform mode → content type → tag → sampling
+### Registry (`registry.py`)
 
-**Bulk operation filters**:
-- `--only-api` — Skip manual/import platforms
-- `--long-form` — Skip short-form platforms (bluesky, mastodon, twitter, threads)
-- `--tag <tag>` — Only include content with matching tags (case-insensitive, OR logic)
-- `--sample N` — Random sample of N items
-- `--since` / `--until` — Date filtering (supports `1d`, `1w`, `1m`, `1y` or `YYYY-MM-DD`)
-- `--date-source` — Filter by `frontmatter` (default) or `mtime`
+Global SQLite DB at `~/.config/crier/crier.db` (WAL mode, foreign keys on; tables `articles`, `publications`, `stats`, `schema_version`). Articles are keyed by a title-derived slug (python-slugify) that stays stable if the title changes; `canonical_url` is optional, uniquely indexed metadata, so posts without one are still tracked. There are no content hashes. `get_or_create_slug()` runs wherever a publication is recorded; `update_article_metadata()` is the public metadata editor (do not import the private `_update_article_metadata`). `migrate_yaml_to_sqlite()` upgrades old YAML registries.
 
-```bash
-# Fully automated batch mode
-crier audit --publish --batch --long-form
+### Reconcile and campaigns
 
-# Typical bulk publish
-crier audit --publish --yes --only-api --long-form
+- `reconcile.py` diffs a platform's live listing against the registry into `in_both`, `untracked_live` (backfilled on `--apply`), `gone_from_platform`, and `unverified`. A registry row is only soft-deleted when the adapter's `list_articles_snapshot()` returns `ArticleListing(complete=True)`. The base implementation wraps `list_articles()` as incomplete and **no adapter currently overrides it**, so in practice `--apply` backfills but never deletes; unmatched rows are reported as `unverified`. A listing error, or an empty listing while the registry has rows, produces an error report rather than mass deletion. Raising `--limit` does not establish completeness.
+- `campaign.py`: `plan_campaign` writes a YAML manifest of missing (post, platform) cells to `<site_root>/.crier/campaigns/<name>.yaml`; short-form cells carry an empty `rewrite` to fill in, so the manifest doubles as the rewrite cache. `run_campaign` publishes pending cells via `publish_and_record`, checks the registry per cell (an interrupted run never reposts), and supports `--max N` to drip a backlog over several runs.
 
-# Filter by tag (only technical posts)
-crier audit --tag python --tag algorithms --only-api --publish --yes
+### MCP server (`mcp_server.py`)
 
-# Sample recent content
-crier audit --since 1m --sample 10 --publish --yes
+20 tools across registry queries, content search and check, actions (publish, delete, archive, campaign plan and run), and platform operations (remote list, doctor, stats), plus 3 resources (`crier://schema`, `crier://config` sanitized, `crier://platforms`). Tools return dicts (`{"error": ...}` on validation failure) and import their dependencies lazily so tool listing stays fast; keep top-level imports minimal.
 
-# Date range
-crier audit --since 2025-01-01 --until 2025-01-31 --publish --yes
+### Config (`config.py`)
 
-# Path + filters
-crier audit content/post --since 1w --only-api --long-form --publish --yes
-
-# Combine tag filter with other filters
-crier audit --tag machine-learning --since 1m --long-form --publish --yes
-```
-
-## Content Search
-
-Search and explore content without publishing using `crier search`:
-
-```bash
-# List all content
-crier search
-
-# Filter by tag
-crier search --tag python
-
-# Filter by date
-crier search --since 1m
-
-# Combine filters
-crier search content/post --tag python --since 1w
-
-# JSON for scripting
-crier search --tag python --json | jq '.results[].file'
-
-# Sample random posts
-crier search --sample 5
-```
-
-JSON output includes: file, title, date, tags, word count.
-
-## Delete & Archive
-
-```bash
-# Delete from specific platform
-crier delete article.md --from devto
-
-# Delete from all platforms
-crier delete article.md --all
-
-# Archive (exclude from audit --publish)
-crier archive article.md
-
-# Unarchive
-crier unarchive article.md
-
-# Include archived in audit
-crier audit --include-archived
-```
-
-## Scheduling
-
-```bash
-# Schedule a post for later
-crier publish article.md --to devto --schedule "tomorrow 9am"
-
-# Manage scheduled posts
-crier schedule list
-crier schedule show ID
-crier schedule cancel ID
-crier schedule run                      # Publish all due posts
-```
-
-Schedule data stored in `<site_root>/.crier/schedule.yaml`.
-
-## Analytics
-
-```bash
-# Stats for all content
-crier stats
-
-# Stats for specific file
-crier stats article.md
-crier stats article.md --refresh        # Force refresh from API
-
-# Top articles by engagement
-crier stats --top 10
-crier stats --since 1m --json
-
-# Filter by platform
-crier stats --platform devto
-```
-
-Stats cached in registry for 1 hour. Platforms with stats: devto (views, likes, comments), bluesky (likes, comments, reposts), mastodon (likes, comments, reposts), linkedin (likes, comments), threads (views, likes, replies, reposts).
-
-```bash
-# Compare engagement across platforms for same content
-crier stats --compare
-
-# Export stats to CSV
-crier stats --export csv
-```
-
-## RSS/Atom Feeds
-
-```bash
-# Generate RSS feed to stdout
-crier feed
-
-# Write to file
-crier feed --output feed.xml
-
-# Atom format
-crier feed --format atom
-
-# Filter and limit
-crier feed --limit 10 --tag python
-crier feed --since 1m --until 1w
-```
-
-Requires `site_base_url` to be configured. Uses `feedgen` library for valid RSS 2.0 and Atom XML.
-
-## Error Recovery
-
-```bash
-# View failed publications
-crier audit --failed
-
-# Re-attempt failed publications
-crier audit --retry
-
-# Preview what would be retried
-crier audit --retry --dry-run
-
-# JSON output for scripting
-crier audit --failed --json
-```
-
-Failed publications are automatically recorded in the registry with error details and timestamp. Successful re-publish clears the error.
-
-## Threading
-
-```bash
-# Split content into thread
-crier publish article.md --to bluesky --thread
-
-# Thread styles
-crier publish article.md --to mastodon --thread --thread-style numbered  # 1/5, 2/5...
-crier publish article.md --to bluesky --thread --thread-style emoji      # 🧵 1/5...
-crier publish article.md --to mastodon --thread --thread-style simple    # No prefix
-```
-
-Thread splitting priority: manual markers (`<!-- thread -->`) → paragraph boundaries → sentence boundaries. Supported platforms: bluesky, mastodon.
-
-## Pre-Publish Validation
-
-```bash
-# Check a single file
-crier check article.md
-
-# Check with platform context
-crier check article.md --to bluesky --to devto
-
-# Check all content
-crier check --all
-
-# Strict mode: warnings become errors
-crier check article.md --strict
-
-# Check external links (slow, opt-in)
-crier check article.md --check-links
-
-# JSON output
-crier check article.md --json
-```
-
-**Checks performed:**
-- Front matter: missing-title (error), missing-date (warning), future-date (info), missing-tags (warning), empty-tags (warning), title-length (warning), missing-description (info)
-- Content: empty-body (error), short-body (warning), broken-relative-links (warning), image-alt-text (info)
-- Platform-specific: bluesky-length (warning), mastodon-length (warning), devto-canonical (info)
-- External: broken-external-link (warning, opt-in with `--check-links`)
-
-**Publish integration:** Pre-publish checks run automatically. Use `--no-check` to skip, `--strict` to block on warnings.
-
-**Audit integration:** Use `--check` with `--publish` to skip files that fail validation.
-
-**Configure severity overrides** in `~/.config/crier/config.yaml`:
-```yaml
-checks:
-  missing-tags: disabled    # Don't care about tags
-  missing-date: error       # Promote to error
-  short-body: disabled      # Allow short posts
-```
-
-## Shared Publishing Core
-
-`publishing.py` owns automated API publishing through typed `PublishRequest`,
-`RewriteOptions`, and `ThreadOptions` inputs. `prepare_request` reads source/config
-and may call an LLM, but never publishes or records. It accepts an optional
-`source_article` snapshot for callers that already parsed content. `execute_plan`
-uses that prepared article without rereading it. `record_outcome` owns success,
-thread, and failure recording, including articles without canonical URLs.
-`publish_and_record` composes the stages. `publish_one` remains an execution-only
-compatibility API: it does not write the registry.
-
-`PublishOutcome` retains the actual adapter result and thread IDs. Its `success`
-includes recording success; `remote_success` distinguishes a successful remote
-write whose local recording failed. Do not convert outcomes into synthetic
-classes or record them again in an API caller. Keep manual/import confirmation
-in the CLI. For scheduled recording errors after remote success, retain terminal
-published state and report the error. Campaigns use `published_unrecorded` to
-prevent resending an untracked successful post. `publication_receipts.py` stores
-atomic recovery receipts beside the database after recording failure. Audit retry
-uses these snapshots for local recording only, including when the source file is
-now missing. A corrupt receipt blocks remote retry; a receipt older than a newer
-failure does not mask that later attempt. Receipts contain article/result metadata,
-never credentials. Successful recording removes the matching receipt. Unreadable
-receipts raise `UnreadableReceipt` (a `ValueError`). MCP `crier_publish` is fenced
-the same way: step 1 reports any receipt as `preview.unrecorded_publication`
-(article_id/url), and step 2 calls `execute_or_recover(plan)`, which records from the
-receipt (`PublishOutcome.recovered`, `recovered: true` in the result) instead of
-publishing again. MCP has no failure row to compare, so any receipt counts there.
-
-`awaiting_confirmation` is not a successful remote write. Preserve CLI manual
-confirmation, but automated callers must report the required manual action.
-Attribution precedence is explicit author, then `llm:<model>` for an actual LLM
-rewrite, then the configured default for supplied rewrite text.
-
-`Platform.list_articles_snapshot()` defaults to an incomplete `ArticleListing`
-for legacy adapters. Only an adapter that exhausted pagination successfully may
-report `complete=True`; an error or short page is not completeness evidence.
-Reconciliation reports unmatched entries as `unverified` and never deletes them
-unless the listing is explicitly complete.
-
-Test HTTP is blocked by the `prevent_live_http` fixture. Mock remote responses or
-use the in-memory adapter fixture; never depend on real publishing services.
+One global file, `~/.config/crier/config.yaml` (override the path with `CRIER_CONFIG`); there is no per-project config and no merge logic. Precedence: config file < environment (`CRIER_<PLATFORM>_API_KEY`, `CRIER_DB`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`) < CLI args. `site_root` locates the content project; `content_paths` resolve against `site_root` (never CWD), while the registry path is global. Profiles can reference other profiles. Schedules live in `<site_root>/.crier/schedule.yaml` and store absolute source paths (legacy relative paths resolve from `site_root`).
 
 ## Non-Obvious Conventions
 
-These conventions are not visible from reading any single file. Violating them will cause regressions.
+Violating these causes regressions that are not visible from any single file.
 
-**Token-as-source-of-truth (MCP destructive ops).** In `crier_publish` and `crier_delete`, step 2 reads ALL operation parameters from the consumed token. Caller arguments on step 2 are intentionally ignored. This prevents a token-substitution bypass. If you add a new parameter to step 1, you MUST add it to the token's `details` dict and read it back in step 2. See `_create_token` / `_consume_token` in `mcp_server.py` and the `test_*_step2_token_overrides_caller_args` regression tests.
+- **Token-as-source-of-truth for MCP destructive ops.** `crier_publish`, `crier_delete`, and `crier_campaign_run` are two-step: step 1 returns a preview plus a token (5-minute TTL); step 2 executes with every parameter read from the consumed token, ignoring caller args. This blocks a token-substitution bypass. A new step-1 parameter must go into the token `details` and be read back in step 2 (see `_create_token`/`_consume_token` and the `test_*_step2_token_overrides_caller_args` tests).
+- **`crier_sql` is sandboxed** in `SAVEPOINT crier_sql_guard`, always rolled back, on top of its `SELECT`-prefix check.
+- **Dual-key registry API.** Public registry functions whose key parameter is named `canonical_url` accept a slug or a canonical URL, dispatched by `_resolve_slug(conn, key)` (slug lookup first). Treat the key as opaque.
+- **Failure rows live in `publications`** with `platform_id IS NULL`. Queries for real publications must filter `WHERE platform_id IS NOT NULL AND deleted_at IS NULL`, or failed attempts count as successes.
+- **UPSERT, never `INSERT OR REPLACE`,** in `record_publication`, `record_thread_publication`, `save_stats`, and `record_failure`. `INSERT OR REPLACE` cascade-deletes stats and silently resets unlisted columns; the UPSERTs explicitly reset `deleted_at`, `last_error`, `is_thread`, `thread_ids`, and `posted_content` so re-publishing resurrects a soft-deleted row cleanly. Locked in by `TestDeletionPreservesHistory`.
+- **Rewrites go through `rewrite.apply_rewrite()`**, a `dataclasses.replace` that sets `body` and `is_rewrite=True`. Never rebuild an `Article(...)` by hand; it silently drops fields when `Article` grows.
+- **Short-form is a class attribute.** `is_short_form_platform(name)` reads `PLATFORMS[name].is_short_form`; the `--long-form` filter and campaign rewrite cells derive from it. Never add a hardcoded platform set.
+- **Derive behavior from structure.** Discovery, short-form detection, and modes all read capability attributes or config structure. Prefer that over parallel lookup tables or string parsing when extending crier.
 
-**`_resolve_slug` dual-key dispatch.** Every public registry function that takes a "key" parameter (named `canonical_url` for backwards compat) actually accepts either a slug or a canonical_url. Internally it goes through `_resolve_slug(conn, key)` which tries the slug primary-key lookup first. Do not assume the parameter is one or the other; use it as opaque.
+## Adding a Platform
 
-**Failure rows masquerade as publications.** `record_failure` writes a row to the `publications` table with `platform_id IS NULL`. SQL queries that want "real" publications must filter `WHERE platform_id IS NOT NULL AND deleted_at IS NULL`. Forgetting this filter will count failed attempts as successful publications.
-
-**UPSERT, not `INSERT OR REPLACE`.** `INSERT OR REPLACE` triggers `ON DELETE CASCADE` on the stats table and silently resets unlisted columns. Use `INSERT ... ON CONFLICT DO UPDATE SET` and explicitly list every column that should reset on conflict (`deleted_at = NULL`, `last_error = NULL`, etc.). Locked in by `TestDeletionPreservesHistory` regression tests.
-
-**Lazy imports in `mcp_server.py`.** Top-level imports are kept minimal so MCP startup is fast (tool-list time matters). Most module imports happen inside tool functions. This is intentional, not laziness.
-
-**Article reconstruction via `dataclasses.replace`.** When applying a rewrite to an `Article`, use `_apply_rewrite(article, content)` (in `mcp_server.py`) or `dataclasses.replace(article, body=..., is_rewrite=True)` directly. Manually constructing `Article(...)` will silently drop fields if `Article` ever grows new attributes.
-
-**Short-form platform detection via class attribute.** `is_short_form_platform(name)` reads `PLATFORMS[name].is_short_form` (a class attribute on the `Platform` subclass). User plugins opt in by setting `is_short_form = True` on their class. Do NOT add a hardcoded set in `config.py`.
-
-**Registry path is global, content paths are per-site.** `get_db_path()` returns `~/.config/crier/crier.db` (overridable via `CRIER_DB`). `get_content_paths()` returns paths relative to `get_project_root()` (which is `site_root` from config, not CWD). Don't conflate them.
-
-**No `.crier/registry.yaml`.** The registry is SQLite. Old YAML registries can be migrated via `migrate_yaml_to_sqlite()` from `registry.py`.
-
-## Adding a New Platform
-
-1. Create `platforms/newplatform.py` implementing the `Platform` abstract class
-2. Set class attributes: `name`, `description`, `max_content_length`, `supports_delete`, `supports_stats`, `supports_threads`
-3. Implement required methods: `publish`, `update`, `list_articles`, `get_article`
-4. Use `self.retry_request(method, url, **kwargs)` instead of direct `requests.*()` calls
-5. Optionally implement: `delete` → `DeleteResult`, `get_stats` → `ArticleStats`, `publish_thread` → `ThreadPublishResult`
-6. Built-in adapters are auto-discovered; do not add a parallel registration mapping
-7. Update README.md with API key format
-
-### Adding a Mastodon-API-Compatible Server (Pleroma, Akkoma, GoToSocial, ...)
-
-If the new platform implements Mastodon's REST API (most fediverse servers do), inherit from `FediversePlatform` instead of `Platform` and override only the class attributes that differ:
-
-```python
-from ._fediverse import FediversePlatform
-
-class Akkoma(FediversePlatform):
-    name = "akkoma"
-    description = "Short posts on Akkoma fediverse server"
-    max_content_length = 5000  # adjust per your instance
-    default_instance = None    # users configure per their instance
-```
-
-All request logic (publish, update, list, delete, threads, stats, HTML stripping) is inherited unchanged. Servers that do NOT implement Mastodon's API (Lemmy, PeerTube) need their own platform classes deriving directly from `Platform`.
-
-### Hidden base classes (leading underscore)
-
-Files in `platforms/` that start with `_` are skipped by auto-discovery. Use this for shared base classes that are not themselves user-visible platforms (currently `_fediverse.py`). The class is still importable via standard Python imports; only the registry-builder ignores it.
-
-### User Plugins
-
-Users can add custom platforms without modifying the crier source:
-
-1. Create `~/.config/crier/platforms/` directory
-2. Drop a `.py` file implementing `Platform` from `crier.platforms.base`
-3. Set `name` class attribute (used as platform identifier)
-4. Implement required methods: `publish`, `update`, `list_articles`, `get_article`
-5. Configure API key: `crier config set platforms.<name>.api_key <key>`
-
-User plugins are auto-discovered at import time. If a user plugin has the same `name` as a built-in, the user plugin wins. Files starting with `_` are skipped. Broken plugins warn but don't crash.
-
-Discovery is handled by `_discover_user_platforms()` in `platforms/__init__.py`, which scans `USER_PLATFORMS_DIR = Path.home() / ".config" / "crier" / "platforms"`. Multiple `Platform` subclasses per file are supported. If the `name` attribute is not overridden (still `"base"`), the lowercase class name is used instead.
+1. Create `platforms/<name>.py` subclassing `Platform`, or `FediversePlatform` for a Mastodon-compatible server (override only `name`, `description`, `max_content_length`, `default_instance`).
+2. Set the capability attributes and implement `publish`, `update`, `list_articles`, `get_article`, plus any of `delete`, `get_stats`, `publish_thread`.
+3. Use `self.retry_request()` for HTTP and return result objects.
+4. Override `list_articles_snapshot()` to return `complete=True` only if the adapter genuinely exhausted pagination; that is what enables reconcile deletions for it.
+5. Add the API-key format to README.md and update the expected count and name set in `tests/test_plugin_discovery.py`. No registration code is needed.
 
 ## Testing
 
-Tests are in `tests/` with 1244 tests covering config, registry, converters, CLI, platforms, scheduler, stats, threading, checker, utils, rewrite, feed, skill, MCP (62 tests), plugin discovery, and the Fediverse abstraction (26 tests).
+- The autouse `prevent_live_http` fixture replaces `requests.sessions.Session.request` with a failure, so every remote call must be mocked. Platform tests patch `crier.platforms.base.requests.<method>` (the module `retry_request` calls through) and set `platform.max_retries = 0` when asserting on error responses.
+- `recording_platform` registers an in-memory `test_platform` adapter (thread-capable) with its API-key env var, for driving the real publishing pipeline end to end.
+- Anything touching the registry must isolate it: set `CRIER_DB` to a temp path, call `reset_connection()` (the module caches its connection), then `init_db()`. The `tmp_registry` fixture does this; `test_stats.py` and `test_threading.py` define local variants. `tmp_config` isolates the config file, `configured_platforms` provides devto, bluesky, manual-mode twitter, and profiles, and `mock_env_api_key` sets per-platform env keys.
+- Nostr signing tests `importorskip("pynostr")`; the rest of `tests/test_nostr.py` runs without the extra.
 
-**Running tests:**
-```bash
-pytest                          # All tests
-pytest tests/test_cli.py -v     # Single file
-pytest -k "test_publish" -v     # By name pattern
-pytest --cov=crier              # With coverage
-```
+## Related
 
-**Key fixtures** (in `conftest.py`):
-- `sample_article` — Pre-built `Article` object
-- `sample_markdown_file` — Temp markdown file with front matter
-- `tmp_config` — Isolated config environment (patches `DEFAULT_CONFIG_FILE`)
-- `tmp_registry` — Isolated SQLite registry (`CRIER_DB` env var + `reset_connection()` + `init_db()`)
-- `mock_env_api_key` — Factory to set `CRIER_{PLATFORM}_API_KEY` env vars
-- `configured_platforms` — Config with devto, bluesky, twitter (manual), profiles
-
-**Test isolation for registry:** Every test that touches the registry MUST set `CRIER_DB` to a temp path, call `reset_connection()`, and `init_db()`. The `tmp_registry` fixture handles this. Local overrides exist in `test_stats.py` and `test_threading.py`.
-
-Platform tests mock `requests` calls rather than hitting real APIs.
+The user-facing Claude Code integration (skill, `/crier` command, cross-poster and auditor agents, `.mcp.json`) lives in a separate repo at `~/github/alex-claude-plugins/crier/`. The in-repo `crier skill` command and `src/crier/SKILL.md` are deprecated in its favor.

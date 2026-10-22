@@ -337,13 +337,20 @@ def set_site_base_url(url: str) -> None:
     _save_global_value("site_base_url", url)
 
 
-def infer_canonical_url(file_path: Path, content_root: Path, base_url: str) -> str:
+def infer_canonical_url(
+    file_path: Path,
+    content_root: Path,
+    base_url: str,
+    front_matter: dict[str, Any] | None = None,
+) -> str:
     """Infer canonical URL from file path using Hugo conventions.
 
     Args:
         file_path: Path to the markdown file (e.g., content/post/2025-01-04-slug/index.md)
         content_root: Root of content directory (e.g., content/)
         base_url: Site base URL (e.g., https://metafunctor.com)
+        front_matter: The page's front matter; its ``url`` and ``slug`` keys
+            override the path the same way Hugo's do.
 
     Returns:
         Inferred canonical URL (e.g., https://metafunctor.com/post/2025-01-04-slug/)
@@ -352,7 +359,17 @@ def infer_canonical_url(file_path: Path, content_root: Path, base_url: str) -> s
     - content/post/slug/index.md -> /post/slug/
     - content/papers/name/index.md -> /papers/name/
     - content/about/_index.md -> /about/
+    - front matter ``url: /x/y/`` -> /x/y/
+    - front matter ``slug: s`` on content/post/2025-01-04-x/index.md -> /post/s/
+      (a section's _index.md keeps its path)
+
+    Site-level ``[permalinks]`` patterns are not modelled.
     """
+    front_matter = front_matter or {}
+    explicit_url = front_matter.get("url")
+    if explicit_url:
+        return f"{base_url}/{str(explicit_url).strip('/')}/"
+
     file_path = Path(file_path).resolve()
     content_root = Path(content_root).resolve()
 
@@ -368,11 +385,16 @@ def infer_canonical_url(file_path: Path, content_root: Path, base_url: str) -> s
     parts = list(rel_path.parts)
 
     # Remove index.md or _index.md from end
+    is_section = bool(parts) and parts[-1] == "_index.md"
     if parts and parts[-1] in ("index.md", "_index.md"):
         parts = parts[:-1]
     elif parts and parts[-1].endswith(".md"):
         # file.md -> file/
         parts[-1] = parts[-1][:-3]
+
+    slug = front_matter.get("slug")
+    if slug and parts and not is_section:
+        parts[-1] = str(slug).strip("/")
 
     url_path = "/".join(parts)
     return f"{base_url}/{url_path}/"

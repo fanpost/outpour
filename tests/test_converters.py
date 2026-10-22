@@ -303,6 +303,51 @@ Body.
         article = parse_markdown_file(str(md))
         assert article.canonical_url == "https://example.com/post/my-article/"
 
+    def test_parse_infers_canonical_url_from_front_matter_slug(self, tmp_path, monkeypatch):
+        """A dated bundle directory with a slug is served at the slug.
+
+        Regression: inference used the directory name, so a cross-post of
+        content/post/2026-10-18-x/index.md with slug: x linked to
+        /post/2026-10-18-x/, which Hugo never builds.
+        """
+        import yaml
+
+        site = tmp_path / "blog"
+        bundle = site / "content" / "post" / "2026-10-18-finding-things"
+        bundle.mkdir(parents=True)
+        md = bundle / "index.md"
+        md.write_text("---\ntitle: Finding Things\nslug: finding-things\n---\n\nBody.\n")
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({
+            "site_root": str(site),
+            "site_base_url": "https://example.com",
+            "content_paths": ["content/post"],
+        }))
+        monkeypatch.setenv("CRIER_CONFIG", str(config_file))
+
+        article = parse_markdown_file(str(md))
+        assert article.canonical_url == "https://example.com/post/finding-things/"
+
+    def test_parse_resolves_bundle_resources_against_the_canonical_page(self, tmp_path, monkeypatch):
+        """A figure stored beside index.md is served under the page's URL."""
+        import yaml
+
+        site = tmp_path / "blog"
+        bundle = site / "content" / "post" / "2026-10-18-finding-things"
+        bundle.mkdir(parents=True)
+        md = bundle / "index.md"
+        md.write_text("---\ntitle: Finding Things\nslug: finding-things\n---\n\n![A graph](graph.svg)\n")
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({
+            "site_root": str(site),
+            "site_base_url": "https://example.com",
+            "content_paths": ["content/post"],
+        }))
+        monkeypatch.setenv("CRIER_CONFIG", str(config_file))
+
+        article = parse_markdown_file(str(md))
+        assert "![A graph](https://example.com/post/finding-things/graph.svg)" in article.body
+
 
 class TestResolveRelativeLinks:
     """Tests for resolve_relative_links()."""
@@ -318,6 +363,14 @@ class TestResolveRelativeLinks:
         body = "See [related](related-post/)."
         result = resolve_relative_links(body, "https://example.com")
         assert result == "See [related](https://example.com/related-post/)."
+
+    def test_path_relative_links_resolve_against_the_page(self):
+        """A page-bundle resource lives under the page, as a browser would resolve it."""
+        body = "![figure](figure.svg) and [root](/about/)"
+        result = resolve_relative_links(body, "https://example.com",
+                                        page_url="https://example.com/post/my-slug/")
+        assert result == ("![figure](https://example.com/post/my-slug/figure.svg) "
+                          "and [root](https://example.com/about/)")
 
     def test_resolve_markdown_image(self):
         """Resolve markdown images."""

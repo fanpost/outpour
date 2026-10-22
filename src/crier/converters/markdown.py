@@ -11,7 +11,7 @@ from ..platforms.base import Article
 from ..config import get_site_base_url, get_content_paths, get_project_root, infer_canonical_url
 
 
-def resolve_relative_links(body: str, base_url: str) -> str:
+def resolve_relative_links(body: str, base_url: str, page_url: str | None = None) -> str:
     """Resolve relative links in markdown content to absolute URLs.
 
     Handles:
@@ -23,6 +23,9 @@ def resolve_relative_links(body: str, base_url: str) -> str:
     Args:
         body: Markdown content with potentially relative links
         base_url: Base URL to resolve against (e.g., https://example.com)
+        page_url: The page's own URL. Path-relative links (``figure.svg``)
+            resolve against it, as a browser would, so page-bundle resources
+            keep working; root-relative links (``/about/``) still use base_url.
 
     Returns:
         Markdown content with relative links resolved to absolute URLs
@@ -32,6 +35,7 @@ def resolve_relative_links(body: str, base_url: str) -> str:
 
     # Ensure base_url has no trailing slash for consistent joining
     base_url = base_url.rstrip("/")
+    relative_base = page_url or base_url + "/"
 
     def is_relative(url: str) -> bool:
         """Check if URL is relative (not absolute, not anchor, not protocol-relative)."""
@@ -50,8 +54,8 @@ def resolve_relative_links(body: str, base_url: str) -> str:
             # Absolute path - join with base domain
             return base_url + url
         else:
-            # Relative path - join with base URL
-            return urljoin(base_url + "/", url)
+            # Relative path - join with the page (or the site root)
+            return urljoin(relative_base, url)
 
     # Pattern for markdown links and images: [text](url) or ![alt](url)
     # Captures: group(1) = ! or empty, group(2) = text/alt, group(3) = url
@@ -203,7 +207,7 @@ def parse_markdown_file(
         # is preserved in the URL: content/post/slug/ -> /post/slug/
         if base_url and content_root:
             inference_root = content_root.parent if content_root.name != "content" else content_root
-            canonical_url = infer_canonical_url(path, inference_root, base_url)
+            canonical_url = infer_canonical_url(path, inference_root, base_url, front_matter)
 
     # Handle tags as list or comma-separated string
     if isinstance(raw_tags, list):
@@ -217,7 +221,7 @@ def parse_markdown_file(
     # Resolve relative links to absolute URLs using site_base_url
     # This ensures links work correctly when cross-posted to other platforms
     if base_url:
-        body = resolve_relative_links(body, base_url)
+        body = resolve_relative_links(body, base_url, page_url=canonical_url)
 
     return Article(
         title=title,

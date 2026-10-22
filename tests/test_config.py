@@ -795,6 +795,58 @@ class TestInferCanonicalUrl:
         url = infer_canonical_url(file_path, content_root, "https://example.com")
         assert url == "https://example.com/article/"
 
+    def test_front_matter_slug_replaces_last_segment(self, tmp_path):
+        # Hugo: a bundle's slug replaces its directory name, keeping the section.
+        content_root = tmp_path / "content"
+        file_path = content_root / "post" / "2026-10-18-dated-dir" / "index.md"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        url = infer_canonical_url(file_path, content_root, "https://example.com",
+                                  front_matter={"slug": "clean-slug"})
+        assert url == "https://example.com/post/clean-slug/"
+
+    def test_front_matter_slug_on_plain_md_file(self, tmp_path):
+        content_root = tmp_path / "content"
+        file_path = content_root / "post" / "2026-01-01-file.md"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        url = infer_canonical_url(file_path, content_root, "https://example.com",
+                                  front_matter={"slug": "clean-slug"})
+        assert url == "https://example.com/post/clean-slug/"
+
+    def test_front_matter_slug_does_not_rename_a_section(self, tmp_path):
+        # A section's _index.md slug does not move the section in Hugo.
+        content_root = tmp_path / "content"
+        file_path = content_root / "about" / "_index.md"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        url = infer_canonical_url(file_path, content_root, "https://example.com",
+                                  front_matter={"slug": "ignored"})
+        assert url == "https://example.com/about/"
+
+    def test_front_matter_url_overrides_the_whole_path(self, tmp_path):
+        content_root = tmp_path / "content"
+        file_path = content_root / "post" / "dir" / "index.md"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        url = infer_canonical_url(file_path, content_root, "https://example.com",
+                                  front_matter={"url": "/elsewhere/page", "slug": "unused"})
+        assert url == "https://example.com/elsewhere/page/"
+
+    def test_blank_slug_falls_back_to_path(self, tmp_path):
+        content_root = tmp_path / "content"
+        file_path = content_root / "post" / "my-slug" / "index.md"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        url = infer_canonical_url(file_path, content_root, "https://example.com",
+                                  front_matter={"slug": ""})
+        assert url == "https://example.com/post/my-slug/"
+
 
 class TestDefaultProfile:
     """Tests for get_default_profile() and set_default_profile()."""

@@ -12,6 +12,16 @@ from crier.reconcile import (
 )
 
 
+def test_failure_only_rows_do_not_trigger_empty_listing_guard(recording_platform):
+    from crier.registry import record_failure
+
+    record_failure("https://site/post", "test_platform", "rejected", title="Post")
+    report = reconcile_platform("test_platform")
+    assert report.error is None
+    assert report.unverified == []
+    assert report.gone_from_platform == []
+
+
 def _row(**kw):
     base = {
         "canonical_url": "https://x/p/",

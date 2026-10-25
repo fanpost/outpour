@@ -310,6 +310,15 @@ class TestGetArticle:
 class TestGetPlatformPublications:
     """Tests for get_platform_publications()."""
 
+    def test_failures_are_excluded_until_published(self, tmp_registry):
+        record_failure("https://site/post", "devto", "rejected", title="Post")
+        assert get_platform_publications("devto") == []
+        record_publication("https://site/post", "devto", "remote-1", "https://dev/1")
+        record_failure("https://site/post", "devto", "later update failed")
+        publications = get_platform_publications("devto")
+        assert len(publications) == 1
+        assert publications[0]["platform_id"] == "remote-1"
+
     def test_empty_platform(self, tmp_registry):
         pubs = get_platform_publications("devto")
         assert pubs == []

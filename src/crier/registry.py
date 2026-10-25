@@ -7,6 +7,7 @@ No content hashes — change detection is dropped.
 
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -131,6 +132,31 @@ def reset_connection() -> None:
             pass
         _connection = None
     _connection_path = None
+
+
+def query_readonly(query: str) -> list[dict[str, Any]]:
+    """Run untrusted SQL on a separate connection restricted to reads.
+
+    A rollback cannot undo connection operations such as ATTACH. Authorize
+    SQLite operations instead of parsing SQL text, and never expose the cached
+    writable connection (or any functions registered on it) to this tool.
+    """
+    get_connection()  # Initialize a new registry before opening it read-only.
+    uri = _get_db_path().expanduser().resolve().as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(uri, uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only = ON")
+        conn.execute("PRAGMA trusted_schema = OFF")
+
+        def authorize(action, arg1, arg2, database, trigger):
+            if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_RECURSIVE):
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_FUNCTION and arg2 != "load_extension":
+                return sqlite3.SQLITE_OK
+            return sqlite3.SQLITE_DENY
+
+        conn.set_authorizer(authorize)
+        return [dict(row) for row in conn.execute(query)]
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
@@ -624,7 +650,7 @@ def get_platform_publications(platform: str) -> list[dict[str, Any]]:
         "SELECT a.*, p.platform_id, p.url AS platform_url, "
         "p.published_at, p.rewritten, p.rewrite_author "
         "FROM articles a JOIN publications p ON a.slug = p.slug "
-        "WHERE p.platform = ? AND p.deleted_at IS NULL",
+        "WHERE p.platform = ? AND p.platform_id IS NOT NULL AND p.deleted_at IS NULL",
         (platform,),
     ).fetchall()
 

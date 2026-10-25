@@ -14,9 +14,11 @@ keyed by canonical_url (stable). Dry-run by default; apply=True publishes.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
@@ -30,6 +32,9 @@ from .converters import parse_markdown_file
 from .platforms import PLATFORMS
 from .registry import is_published
 from .utils import find_content_files
+
+if TYPE_CHECKING:
+    from .publishing import PublishPlan
 
 
 # --- manifest location and IO ----------------------------------------------
@@ -143,8 +148,37 @@ class CampaignRunSummary:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class PreparedCampaign:
+    """A reviewed manifest and its prepared publications, retained only in memory."""
+
+    name: str
+    manifest: dict
+    plans: dict[tuple[int, str], PublishPlan]
+
+
+def prepare_campaign(name: str) -> PreparedCampaign | None:
+    """Capture content/configuration once for MCP preview and confirmation."""
+    from .publishing import PublishRequest, RewriteOptions, prepare_request
+
+    manifest = load_manifest(name)
+    if manifest is None:
+        return None
+    plans = {}
+    for index, post in enumerate(manifest.get("posts", [])):
+        for platform, cell in post.get("targets", {}).items():
+            if cell.get("status") in ("published", "published_unrecorded"):
+                continue
+            plans[index, platform] = prepare_request(PublishRequest(
+                Path(post["file"]), platform,
+                rewrite=RewriteOptions(content=cell.get("rewrite") or None),
+            ))
+    return PreparedCampaign(name, manifest, plans)
+
+
 def run_campaign(
-    name: str, *, apply: bool = False, max_cells: int | None = None
+    name: str, *, apply: bool = False, max_cells: int | None = None,
+    prepared: PreparedCampaign | None = None,
 ) -> CampaignRunSummary:
     """Execute (or preview) a campaign's pending cells.
 
@@ -159,16 +193,24 @@ def run_campaign(
     for the next run, so a large backlog rolls out gradually instead of
     flooding feeds. ``None`` means no cap.
     """
-    manifest = load_manifest(name)
+    if prepared is not None:
+        if name != prepared.name or (apply and load_manifest(name) != prepared.manifest):
+            return CampaignRunSummary(
+                name=name, error="Campaign changed since preview. Request a new confirmation.",
+            )
+        manifest = deepcopy(prepared.manifest)
+    else:
+        manifest = load_manifest(name)
     if manifest is None:
         return CampaignRunSummary(name=name, error=f"Campaign not found: {name}")
 
-    from .publishing import PublishRequest, RewriteOptions, publish_and_record
+    from .publication_receipts import UnreadableReceipt
+    from .publishing import PublishRequest, RewriteOptions, execute_or_recover, publish_and_record
 
     summary = CampaignRunSummary(name=name, applied=apply)
     attempted = 0  # real publish attempts this run (for max_cells)
 
-    for post in manifest.get("posts", []):
+    for index, post in enumerate(manifest.get("posts", [])):
         canonical = post.get("canonical_url")
         file = post.get("file")
         for platform, cell in post.get("targets", {}).items():
@@ -201,8 +243,18 @@ def run_campaign(
                 summary.pending += 1
                 continue
 
-            outcome = publish_and_record(PublishRequest(
-                Path(file), platform, rewrite=RewriteOptions(content=rewrite or None)))
+            if prepared is not None:
+                try:
+                    outcome = execute_or_recover(prepared.plans[index, platform])
+                except UnreadableReceipt as exc:
+                    cell["status"] = "failed"
+                    cell["error"] = f"Cannot read recovery receipt: {exc}"
+                    summary.failed += 1
+                    attempted += 1
+                    continue
+            else:
+                outcome = publish_and_record(PublishRequest(
+                    Path(file), platform, rewrite=RewriteOptions(content=rewrite or None)))
             attempted += 1
             if outcome.success:
                 cell["status"] = "published"

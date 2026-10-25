@@ -16,6 +16,22 @@ def runner():
     return CliRunner()
 
 
+def test_init_offers_every_discovered_platform(recording_platform, monkeypatch):
+    from crier.platforms import PLATFORMS
+
+    offered = []
+
+    def choose(message, *, choices):
+        offered.extend(choice.value for choice in choices)
+        return Mock(ask=lambda: None)  # Inspect the real menu, then cancel.
+
+    monkeypatch.setattr("questionary.checkbox", choose)
+    result = CliRunner().invoke(cli, ["init"])
+    assert result.exit_code == 0, result.output
+    assert {"nostr", "pleroma", "test_platform"}.issubset(offered)
+    assert offered == sorted(PLATFORMS)
+
+
 @pytest.fixture
 def mock_config_and_registry(tmp_path, monkeypatch):
     """Set up mock config and SQLite registry for CLI tests."""

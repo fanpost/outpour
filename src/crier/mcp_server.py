@@ -419,19 +419,11 @@ def crier_sql(query: str) -> dict:
         crier_sql("SELECT platform, COUNT(*) as n FROM publications GROUP BY platform")
         crier_sql("SELECT a.title, p.platform FROM articles a JOIN publications p ON a.slug = p.slug")
     """
-    conn = _get_conn()
+    from .registry import query_readonly
+
     try:
-        conn.execute("SAVEPOINT crier_sql_guard")
-        try:
-            rows = conn.execute(query).fetchall()
-            if not rows:
-                return {"rows": [], "count": 0}
-            columns = rows[0].keys()
-            result = [dict(zip(columns, row)) for row in rows]
-            return {"rows": result, "count": len(result)}
-        finally:
-            conn.execute("ROLLBACK TO crier_sql_guard")
-            conn.execute("RELEASE crier_sql_guard")
+        rows = query_readonly(query)
+        return {"rows": rows, "count": len(rows)}
     except Exception as e:
         return {"error": str(e)}
 
@@ -663,14 +655,7 @@ def crier_publish(
         if not details:
             return {"error": "Invalid or expired confirmation token. Request a new one."}
 
-        prepared = _prepare_publish(
-            details["file"],
-            details["platform"],
-            details.get("rewrite_content"), details.get("rewrite_author"),
-        )
-        if isinstance(prepared, dict):
-            return prepared
-        return _execute_publish(prepared)
+        return _execute_publish(details["plan"])
 
     # Step 1 / dry_run: validate, build preview, optionally mint a token.
     prepared = _prepare_publish(file_path, platform, rewrite_content, rewrite_author)
@@ -704,12 +689,7 @@ def crier_publish(
     if dry_run:
         return {"dry_run": True, "preview": preview}
 
-    token = _create_token("publish", {
-        "file": str(resolved),
-        "platform": platform,
-        "rewrite_content": rewrite_content,
-        "rewrite_author": rewrite_author,
-    })
+    token = _create_token("publish", {"plan": prepared})
     return {
         "confirmation_required": True,
         "preview": preview,
@@ -1030,13 +1010,14 @@ def crier_campaign_run(name: str, confirmation_token: str | None = None) -> dict
         crier_campaign_run("spring-backlog")                            # preview + token
         crier_campaign_run("spring-backlog", confirmation_token="abc")  # execute
     """
-    from .campaign import run_campaign
+    from .campaign import prepare_campaign, run_campaign
 
     if confirmation_token:
         details = _consume_token(confirmation_token, "campaign_run")
         if details is None:
             return {"error": "Invalid or expired confirmation token"}
-        summary = run_campaign(details["name"], apply=True)
+        prepared = details["prepared"]
+        summary = run_campaign(prepared.name, apply=True, prepared=prepared)
         if summary.error:
             return {"error": summary.error}
         return {
@@ -1048,10 +1029,13 @@ def crier_campaign_run(name: str, confirmation_token: str | None = None) -> dict
             "needs_rewrite": summary.needs_rewrite,
         }
 
-    summary = run_campaign(name, apply=False)
+    prepared = prepare_campaign(name)
+    if prepared is None:
+        return {"error": f"Campaign not found: {name}"}
+    summary = run_campaign(name, apply=False, prepared=prepared)
     if summary.error:
         return {"error": summary.error}
-    token = _create_token("campaign_run", {"name": name})
+    token = _create_token("campaign_run", {"prepared": prepared})
     return {
         "name": summary.name,
         "preview": {

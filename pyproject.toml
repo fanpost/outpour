@@ -36,6 +36,9 @@ dependencies = [
     "dateparser>=1.1.0",
     "feedgen>=1.0.0",
     "python-slugify>=8.0",
+    "tree-sitter>=0.25,<0.27",
+    "marko>=2.2.4,<3",
+    "tree-sitter-html>=0.23.2,<0.24",
     "tomli>=2.0; python_version < '3.11'",
 ]
 

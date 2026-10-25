@@ -263,6 +263,40 @@ class TestCrierStats:
 
 
 class TestCrierSql:
+    def test_attach_is_denied_without_creating_a_file(self, mcp_registry):
+        from crier.registry import get_connection
+
+        target = mcp_registry / "outside.db"
+        result = crier_sql(f"ATTACH DATABASE '{target}' AS outside")
+        assert "error" in result
+        assert not target.exists()
+        assert [row[1] for row in get_connection().execute("PRAGMA database_list")] == ["main"]
+
+    @pytest.mark.parametrize("query", [
+        "DELETE FROM articles RETURNING slug",
+        "WITH selected AS (SELECT slug FROM articles) DELETE FROM articles "
+        "WHERE slug IN (SELECT slug FROM selected)",
+        "PRAGMA query_only = OFF",
+        "PRAGMA writable_schema = ON",
+        "CREATE TEMP TABLE surprise (value TEXT)",
+        "SELECT load_extension('surprise')",
+        "BEGIN",
+    ])
+    def test_unsafe_operations_are_denied(self, mcp_registry, query):
+        _seed_articles()
+        assert "error" in crier_sql(query)
+        assert crier_sql("SELECT COUNT(*) AS n FROM articles")["rows"] == [{"n": 3}]
+
+    def test_cte_aggregates_work_without_restricting_registry_writes(self, mcp_registry):
+        _seed_articles()
+        result = crier_sql(
+            "WITH counts AS (SELECT platform, COUNT(*) AS n FROM publications GROUP BY platform) "
+            "SELECT upper(platform) AS platform, n FROM counts ORDER BY platform"
+        )
+        assert result["rows"] == [{"platform": "BLUESKY", "n": 2}, {"platform": "DEVTO", "n": 3}]
+        record_failure(None, "devto", "test error", title="Still writable")
+        assert crier_sql("SELECT COUNT(*) AS n FROM articles")["rows"] == [{"n": 4}]
+
     def test_select_articles(self, mcp_registry):
         _seed_articles()
         result = crier_sql("SELECT slug, title FROM articles")
@@ -289,6 +323,10 @@ class TestCrierSql:
 
 
 class TestCrierSummary:
+    def test_publications_exclude_failure_only_rows(self, mcp_registry):
+        record_failure("https://site/post", "devto", "rejected", title="Post")
+        assert crier_publications("devto")["publications"] == []
+
     def test_summary(self, mcp_registry):
         _seed_articles()
         result = crier_summary()
@@ -309,6 +347,16 @@ class TestCrierSummary:
 
 
 class TestCrierSearch:
+    def test_toml_date_and_tag_filters(self, mcp_registry):
+        content = mcp_registry / "content" / "post"
+        content.mkdir(parents=True)
+        (content / "toml.md").write_text(
+            '+++\ntitle="TOML Post"\ndate=2026-10-20\ntags=["Python"]\n+++\nBody'
+        )
+        result = crier_search(tags=["python"], since="2026-10-01")
+        assert result["count"] == 1
+        assert result["results"][0]["title"] == "TOML Post"
+
     def test_search_finds_files(self, mcp_registry):
         """Search finds markdown files in content_paths."""
         content_dir = mcp_registry / "content" / "post" / "test-article"
@@ -706,38 +754,24 @@ class TestCrierCampaign:
         assert len(result["needs_rewrite"]) == 1
         assert result["needs_rewrite"][0]["platform"] == "bluesky"
 
-    def test_campaign_run_step1_returns_token_no_execute(self, mcp_registry, monkeypatch):
-        from crier.campaign import CampaignRunSummary
-
-        calls = []
-
-        def fake_run(name, *, apply=False):
-            calls.append((name, apply))
-            return CampaignRunSummary(name=name, pending=3)
-
-        monkeypatch.setattr("crier.campaign.run_campaign", fake_run)
-        result = crier_campaign_run("spring")
+    def test_campaign_run_step1_returns_token_no_execute(self, recording_platform, tmp_path):
+        md = tmp_path / "reviewed.md"
+        md.write_text("---\ntitle: Reviewed\n---\nReviewed body.")
+        _reviewed_campaign(md)
+        result = crier_campaign_run("reviewed")
         assert "confirmation_token" in result
-        assert result["preview"]["pending"] == 3
-        # step 1 is a dry-run only
-        assert calls == [("spring", False)]
+        assert result["preview"]["pending"] == 1
+        assert recording_platform.articles == []
 
-    def test_campaign_run_step2_executes_from_token(self, mcp_registry, monkeypatch):
-        from crier.campaign import CampaignRunSummary
-
-        calls = []
-
-        def fake_run(name, *, apply=False):
-            calls.append((name, apply))
-            return CampaignRunSummary(name=name, published=2, applied=True)
-
-        monkeypatch.setattr("crier.campaign.run_campaign", fake_run)
-        token = _create_token("campaign_run", {"name": "spring"})
-        # token-as-source-of-truth: caller name is ignored, token name wins
+    def test_campaign_run_step2_executes_from_token(self, recording_platform, tmp_path):
+        md = tmp_path / "reviewed.md"
+        md.write_text("---\ntitle: Reviewed\n---\nReviewed body.")
+        _reviewed_campaign(md)
+        token = crier_campaign_run("reviewed")["confirmation_token"]
         result = crier_campaign_run("DIFFERENT", confirmation_token=token)
         assert result["applied"] is True
-        assert result["published"] == 2
-        assert calls == [("spring", True)]
+        assert result["published"] == 1
+        assert recording_platform.articles[0].body == "Reviewed body."
 
     def test_campaign_run_invalid_token(self, mcp_registry):
         result = crier_campaign_run("spring", confirmation_token="bogus")
@@ -765,7 +799,7 @@ class TestCrierStatsRefresh:
         assert result["count"] == 0
 
 
-def test_confirmed_publish_reads_source_once(recording_platform, tmp_path, monkeypatch):
+def test_confirmed_publish_does_not_reread_source(recording_platform, tmp_path, monkeypatch):
     from crier.registry import get_publication_id
     md = tmp_path / 'once.md'
     md.write_text('---\ntitle: Once\n---\nPrepared body.')
@@ -780,9 +814,82 @@ def test_confirmed_publish_reads_source_once(recording_platform, tmp_path, monke
     monkeypatch.setattr(Path, 'read_text', read)
     result = crier_publish('ignored.md', 'ignored', confirmation_token=preview['confirmation_token'])
     assert result['success']
-    assert len(reads) == 1
+    assert reads == []
     assert recording_platform.articles[0].body == 'Prepared body.'
     assert get_publication_id('once', 'test_platform') == 'remote-1'
+
+
+@pytest.mark.parametrize("remove_source", [False, True])
+def test_confirmation_publishes_reviewed_snapshot(recording_platform, tmp_path, remove_source):
+    md = tmp_path / "reviewed.md"
+    md.write_text("---\ntitle: Reviewed\ncanonical_url: https://site/reviewed\n---\nReviewed body.")
+    preview = crier_publish(str(md), "test_platform")
+    if remove_source:
+        md.unlink()
+    else:
+        md.write_text("---\ntitle: Changed\ncanonical_url: https://site/changed\n---\nChanged body.")
+    result = crier_publish("ignored", "ignored", confirmation_token=preview["confirmation_token"])
+    assert result.get("success"), result
+    article = recording_platform.articles[0]
+    assert (article.title, article.body, article.canonical_url) == (
+        "Reviewed", "Reviewed body.", "https://site/reviewed"
+    )
+
+
+def _reviewed_campaign(md):
+    from crier.campaign import save_manifest
+
+    manifest = {"posts": [{"file": str(md), "canonical_url": "https://site/reviewed",
+                           "targets": {"test_platform": {"status": "pending"}}}]}
+    save_manifest("reviewed", manifest)
+    return manifest
+
+
+def test_campaign_confirmation_publishes_reviewed_source(recording_platform, tmp_path):
+    md = tmp_path / "reviewed.md"
+    md.write_text("---\ntitle: Reviewed\n---\nReviewed body.")
+    _reviewed_campaign(md)
+    preview = crier_campaign_run("reviewed")
+    md.write_text("---\ntitle: Changed\n---\nChanged body.")
+    result = crier_campaign_run("ignored", confirmation_token=preview["confirmation_token"])
+    assert result.get("published") == 1, result
+    assert recording_platform.articles[0].title == "Reviewed"
+    assert recording_platform.articles[0].body == "Reviewed body."
+
+
+def test_campaign_confirmation_rejects_changed_manifest(recording_platform, tmp_path):
+    from crier.campaign import save_manifest, load_manifest
+
+    md = tmp_path / "reviewed.md"
+    md.write_text("---\ntitle: Reviewed\n---\nReviewed body.")
+    manifest = _reviewed_campaign(md)
+    preview = crier_campaign_run("reviewed")
+    manifest["posts"][0]["targets"]["test_platform"]["rewrite"] = "Unreviewed rewrite."
+    save_manifest("reviewed", manifest)
+    result = crier_campaign_run("reviewed", confirmation_token=preview["confirmation_token"])
+    assert "changed" in result.get("error", "").lower(), result
+    assert recording_platform.articles == []
+    assert load_manifest("reviewed") == manifest
+
+
+def test_campaign_confirmation_blocks_corrupt_receipt(recording_platform, tmp_path):
+    from crier.campaign import load_manifest
+    from crier.publication_receipts import _path
+
+    md = tmp_path / "reviewed.md"
+    md.write_text("---\ntitle: Reviewed\n---\nReviewed body.")
+    _reviewed_campaign(md)
+    preview = crier_campaign_run("reviewed")
+    receipt = _path(md, "test_platform")
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("{invalid json")
+
+    result = crier_campaign_run("reviewed", confirmation_token=preview["confirmation_token"])
+    assert result["failed"] == 1 and result["published"] == 0
+    assert recording_platform.articles == []
+    cell = load_manifest("reviewed")["posts"][0]["targets"]["test_platform"]
+    assert "Cannot read recovery receipt" in cell["error"]
+    assert receipt.read_text() == "{invalid json"
 
 
 @pytest.mark.parametrize('success', [True, False])

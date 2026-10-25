@@ -132,23 +132,9 @@ def get_content_date(file_path: Path) -> datetime | None:
     Returns None if no date field or file can't be parsed.
     """
     try:
-        with open(file_path) as f:
-            content = f.read()
+        from .converters.markdown import parse_front_matter
 
-        # Check for YAML front matter
-        if not content.startswith('---'):
-            return None
-
-        # Find end of front matter
-        end_idx = content.find('---', 3)
-        if end_idx == -1:
-            return None
-
-        front_matter = content[3:end_idx]
-
-        # Parse YAML
-        import yaml
-        data = yaml.safe_load(front_matter)
+        data, _ = parse_front_matter(Path(file_path).read_text(encoding="utf-8"))
         if not data or 'date' not in data:
             return None
 
@@ -178,23 +164,9 @@ def get_content_tags(file_path: Path) -> list[str]:
     Tags are normalized to lowercase for case-insensitive matching.
     """
     try:
-        with open(file_path) as f:
-            content = f.read()
+        from .converters.markdown import parse_front_matter
 
-        # Check for YAML front matter
-        if not content.startswith('---'):
-            return []
-
-        # Find end of front matter
-        end_idx = content.find('---', 3)
-        if end_idx == -1:
-            return []
-
-        front_matter = content[3:end_idx]
-
-        # Parse YAML
-        import yaml
-        data = yaml.safe_load(front_matter)
+        data, _ = parse_front_matter(Path(file_path).read_text(encoding="utf-8"))
         if not data or 'tags' not in data:
             return []
 

@@ -423,7 +423,7 @@ def recover_unrecorded(
     return outcome if dry_run else record_outcome(outcome)
 
 
-def execute_or_recover(plan: PublishPlan) -> PublishOutcome:
+def execute_or_recover(plan: PublishPlan, *, failed_at: str | None = None) -> PublishOutcome:
     """Execute and record a prepared plan unless a receipt shows it is already live.
 
     A confirmed publish has no failure row to compare against, so any receipt for
@@ -432,7 +432,7 @@ def execute_or_recover(plan: PublishPlan) -> PublishOutcome:
     and therefore also block the remote write.
     """
     if plan.request is not None:
-        recovered = recover_unrecorded(plan.request)
+        recovered = recover_unrecorded(plan.request, failed_at=failed_at)
         if recovered is not None:
             return recovered
     return record_outcome(execute_plan(plan))
@@ -445,7 +445,10 @@ def publish_and_record(
     source_article: Article | None = None,
     silent: bool = True,
     console=None,
+    failed_at: str | None = None,
 ) -> PublishOutcome:
+    from .publication_receipts import UnreadableReceipt
+
     plan = prepare_request(request, source_article=source_article, silent=silent, console=console)
     if dry_run and not plan.error:
         return _outcome(plan, PublishResult(True, plan.platform), state=PublicationState.PREVIEW)
@@ -455,7 +458,15 @@ def publish_and_record(
             PublishResult(False, plan.platform, error=plan.error),
             state=PublicationState.PREVIEW,
         )
-    return record_outcome(execute_plan(plan))
+    try:
+        return execute_or_recover(plan, failed_at=failed_at)
+    except UnreadableReceipt as exc:
+        # Preserve the receipt and existing registry evidence. A recording-only
+        # recovery problem is not a new failed remote publication attempt.
+        return _outcome(
+            plan,
+            PublishResult(False, plan.platform, error=f"Cannot read recovery receipt: {exc}"),
+        )
 
 
 def prepare_publish(

@@ -17,6 +17,20 @@ from crier.utils import (
 )
 
 
+def test_toml_metadata_is_available_to_content_filters(tmp_path):
+    post = tmp_path / "post.md"
+    post.write_text('+++\ntitle="Post"\ndate=2026-10-20\ntags=["Python", "MCP"]\n+++\nBody')
+    assert get_content_date(post) == datetime(2026, 10, 20)
+    assert get_content_tags(post) == ["python", "mcp"]
+
+
+def test_yaml_delimiter_inside_metadata_is_not_a_boundary(tmp_path):
+    post = tmp_path / "post.md"
+    post.write_text('---\ntitle: "Before --- after"\ndate: 2026-10-20\ntags: [python]\n---\nBody')
+    assert get_content_date(post) == datetime(2026, 10, 20)
+    assert get_content_tags(post) == ["python"]
+
+
 class TestTruncateAtSentence:
     """Tests for truncate_at_sentence()."""
 

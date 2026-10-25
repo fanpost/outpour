@@ -90,6 +90,84 @@ def parity_source(recording_platform, tmp_path):
     return md
 
 
+@pytest.mark.parametrize("entry", ["cli", "mcp", "campaign", "schedule"])
+def test_public_entry_points_recover_existing_receipts(
+    entry, parity_source, recording_platform, monkeypatch
+):
+    from crier.publishing import PublishRequest, publish_and_record
+    from crier.publication_receipts import load_receipt
+
+    with monkeypatch.context() as patcher:
+        def unavailable(**kwargs):
+            raise RuntimeError("registry unavailable")
+
+        patcher.setattr(registry, "record_publication", unavailable)
+        first = publish_and_record(PublishRequest(parity_source, "test_platform"))
+    assert first.remote_success and not first.success
+    assert load_receipt(parity_source, "test_platform") is not None
+
+    invoke_entry(entry, parity_source)
+
+    assert len(recording_platform.articles) == 1
+    assert registry.get_publication_id("https://site/parity", "test_platform") == "remote-1"
+    assert load_receipt(parity_source, "test_platform") is None
+
+
+def test_shared_publishing_recovers_without_source_or_credentials(
+    parity_source, recording_platform, monkeypatch
+):
+    from crier.publishing import PublishRequest, publish_and_record
+
+    request = PublishRequest(parity_source, "test_platform")
+    with monkeypatch.context() as patcher:
+        def unavailable(**kwargs):
+            raise RuntimeError("registry unavailable")
+
+        patcher.setattr(registry, "record_publication", unavailable)
+        assert publish_and_record(request).remote_success
+    parity_source.unlink()
+    monkeypatch.delenv("CRIER_TEST_PLATFORM_API_KEY")
+
+    recovered = publish_and_record(request)
+    assert recovered.success and recovered.recovered
+    assert len(recording_platform.articles) == 1
+
+
+def test_shared_publishing_blocks_corrupt_receipt(parity_source, recording_platform):
+    from crier.publishing import PublishRequest, publish_and_record
+    from crier.publication_receipts import _path
+
+    receipt = _path(parity_source, "test_platform")
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("{invalid json")
+
+    outcome = publish_and_record(PublishRequest(parity_source, "test_platform"))
+    assert not outcome.success
+    assert "Cannot read recovery receipt" in outcome.error
+    assert recording_platform.articles == []
+    assert registry.get_all_articles() == {}
+    assert receipt.read_text() == "{invalid json"
+
+
+def test_audit_retry_does_not_recover_receipt_older_than_failure(parity_source, recording_platform):
+    from crier.platforms.base import Article, PublishResult
+    from crier.publication_receipts import PublicationReceipt, save_receipt
+
+    save_receipt(PublicationReceipt(
+        str(parity_source), "test_platform",
+        (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+        Article("Old", "Old body.", canonical_url="https://site/parity"),
+        PublishResult(True, "test_platform", "old-id", "https://remote/old"),
+    ))
+    registry.record_failure("https://site/parity", "test_platform", "newer attempt failed",
+                            title="Parity", source_file=parity_source)
+    result = CliRunner().invoke(cli, ["audit", "--retry", "--json"])
+    assert result.exit_code == 0, result.output
+    assert len(recording_platform.articles) == 1
+    assert recording_platform.articles[0].body == "Body."
+    assert registry.get_publication_id("https://site/parity", "test_platform") == "remote-1"
+
+
 @pytest.mark.parametrize("entry", ["cli", "mcp", "campaign", "audit", "retry", "schedule"])
 def test_public_entry_points_share_payload_and_record_once(
     entry, parity_source, recording_platform, monkeypatch

@@ -245,6 +245,12 @@ canonical_url = "https://myblog.com/my-post"
 Your content here...
 ```
 
+Date and tag filters support both front matter formats. When `site_base_url` is
+configured, Crier resolves relative links and images against the article's
+canonical URL, including an explicitly supplied `canonical_url`. Root-relative
+links use the site's origin. Markdown references and HTML `href`/`src` attributes
+are supported; code examples and surrounding formatting are preserved.
+
 ## Commands
 
 ```bash
@@ -664,12 +670,24 @@ directory. Correct old paths if their original creation directory differed.
 
 If a remote publish succeeds but registry recording fails, results include the
 remote ID/URL and `remote_published: true` where available. A recovery receipt beside the registry database retains the prepared article
-and remote result without credentials. When retrying an existing failure,
-`audit --retry` repairs recording from that receipt instead of posting again;
-unreadable receipts block retry. The MCP `crier_publish` tool does the same: its
+and remote result without credentials. All normal publishing entry points check
+for an existing receipt and repair recording instead of posting again;
+unreadable receipts block publication. When retrying a recorded failure,
+`audit --retry` ignores receipts older than that failure. The MCP `crier_publish` tool's
 preview reports the live post as `unrecorded_publication`, and confirming records
 it from the receipt (`recovered: true`) rather than publishing a duplicate. Schedules remain terminal `published` with an
 error; campaign cells become `published_unrecorded` and subsequent runs skip them.
+
+MCP publish confirmation retains the prepared article in memory for the token's
+five-minute lifetime. Edits to the source after preview do not change the post
+that will be sent; request a new preview to publish those edits. Campaign tokens
+also retain prepared posts and reject confirmation if the manifest has changed,
+so newly added targets or rewrites require a new preview.
+
+The MCP `crier_sql` tool runs queries on a separate read-only connection.
+SQLite's authorizer allows reads and ordinary query functions while rejecting
+writes, database attachment, extension loading, and connection-changing commands.
+Publication listings exclude failed attempts that have no remote post ID.
 
 ## Custom Platforms
 

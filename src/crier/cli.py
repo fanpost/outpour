@@ -238,28 +238,16 @@ def init():
     console.print("[bold]Step 2: Platform Configuration[/bold]")
     console.print("[dim]Which platforms do you want to publish to?[/dim]\n")
 
-    # Group platforms by category
-    categories = {
-        "Blog Platforms": ["devto", "hashnode", "medium", "ghost", "wordpress"],
-        "Social Media": ["bluesky", "mastodon", "twitter", "threads", "linkedin"],
-        "Newsletters": ["buttondown"],
-        "Announcements": ["telegram", "discord"],
-    }
-
-    # Build choices showing configured status
+    # Discovery is the single source of truth, including user adapters.
     choices = []
-    for category, platform_names in categories.items():
-        # Only include platforms that are registered
-        available = [p for p in platform_names if p in PLATFORMS]
-        if available:
-            for p in available:
-                is_configured = bool(get_api_key(p))
-                status = " [green](configured)[/green]" if is_configured else ""
-                choices.append(questionary.Choice(
-                    title=f"{p} ({category.split()[0].lower()}){status}",
-                    value=p,
-                    checked=is_configured,
-                ))
+    for name, adapter in sorted(PLATFORMS.items()):
+        is_configured = bool(get_api_key(name))
+        status = " (configured)" if is_configured else ""
+        choices.append(questionary.Choice(
+            title=f"{name} — {adapter.description}{status}",
+            value=name,
+            checked=is_configured,
+        ))
 
     selected_platforms = questionary.checkbox(
         "Select platforms to configure:",
@@ -2575,7 +2563,10 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                     )
 
                 if outcome is None:
-                    outcome = publish_and_record(PublishRequest(Path(source_file), platform_name))
+                    outcome = publish_and_record(
+                        PublishRequest(Path(source_file), platform_name),
+                        failed_at=failure.get("error_at"),
+                    )
                 result = outcome
 
                 if result.success:

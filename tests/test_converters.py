@@ -1,5 +1,5 @@
 """Tests for crier.converters module."""
-
+import pytest
 
 from crier.converters import parse_markdown_file, parse_front_matter
 from crier.converters.markdown import resolve_relative_links
@@ -352,6 +352,64 @@ Body.
 class TestResolveRelativeLinks:
     """Tests for resolve_relative_links()."""
 
+    @pytest.mark.parametrize("body", [
+        '```md\n[example](relative.md)\n<img src="figure.svg">\n```',
+        '~~~html\n<a href="relative.md">example</a>\n~~~',
+        '    [example](relative.md)\n    <img src="figure.svg">',
+        '`[example](relative.md)` and `<img src="figure.svg">`',
+        '<!-- <img src="figure.svg"> -->',
+        '<script>const example = \'<img src="figure.svg">\';</script>',
+        r'\[example](relative.md)',
+        '[invalid URL](https://[bad)',
+    ])
+    def test_literal_examples_are_preserved(self, body):
+        assert resolve_relative_links(body, "https://example.com") == body
+
+    @pytest.mark.parametrize(("body", "expected"), [
+        ('[graph][g]\n\n[g]: figure.svg "A title"',
+         '[graph][g]\n\n[g]: https://example.com/post/figure.svg "A title"'),
+        ('![graph][]\n\n[graph]: <figure.svg>',
+         '![graph][]\n\n[graph]: <https://example.com/post/figure.svg>'),
+        ('[a [nested] label](figure.svg "Title")',
+         '[a [nested] label](https://example.com/post/figure.svg "Title")'),
+        ('[![image](figure.svg)](details/)',
+         '[![image](https://example.com/post/figure.svg)](https://example.com/post/details/)'),
+        ('[graph](<figure one.svg> "Title")',
+         '[graph](<https://example.com/post/figure%20one.svg> "Title")'),
+        ('<a HREF = \'details/?x=1&amp;y=2\'>link</a>',
+         '<a HREF = \'https://example.com/post/details/?x=1&amp;y=2\'>link</a>'),
+        ('<img src=figure.svg>', '<img src=https://example.com/post/figure.svg>'),
+        ('> [link](figure.svg)\n> continued',
+         '> [link](https://example.com/post/figure.svg)\n> continued'),
+        ('| link |\n| --- |\n| [graph](figure.svg) |',
+         '| link |\n| --- |\n| [graph](https://example.com/post/figure.svg) |'),
+        ('é 🐈 [graph](figure.svg)', 'é 🐈 [graph](https://example.com/post/figure.svg)'),
+        ('[root](/about/)', '[root](https://example.com/about/)'),
+        ('[graph](a(b).svg)', '[graph](https://example.com/post/a\\(b\\).svg)'),
+        (r'[graph](a\)b.svg)', r'[graph](https://example.com/post/a\)b.svg)'),
+        ('> [graph][g]\n>\n> [g]: a.svg',
+         '> [graph][g]\n>\n> [g]: https://example.com/post/a.svg'),
+        ('[graph](a&amp;b.svg)', '[graph](https://example.com/post/a&amp;b.svg)'),
+        ('<svg viewBox="0 0 1 1"><a href="a.svg">é</a></svg>',
+         '<svg viewBox="0 0 1 1"><a href="https://example.com/post/a.svg">é</a></svg>'),
+    ])
+    def test_structured_destinations_preserve_surrounding_source(self, body, expected):
+        assert resolve_relative_links(body, "https://example.com/blog", "https://example.com/post/") == expected
+
+    def test_real_link_changes_without_changing_code_or_layout(self):
+        body = '# Title\r\n\r\n```md\r\n[x](x.md)\r\n```\r\n\r\n  [real](x.md)\r\n'
+        expected = body.replace('  [real](x.md)', '  [real](https://example.com/x.md)')
+        assert resolve_relative_links(body, "https://example.com") == expected
+
+    @pytest.mark.parametrize(("body", "expected"), [
+        ('<img src=" image.png ">', '<img src="https://example.com/image.png">'),
+        ('<a href="\t other.html \r\n">link</a>', '<a href="https://example.com/other.html">link</a>'),
+        ('<img src="&#32;image.png&#32;">', '<img src="https://example.com/image.png">'),
+        ('<img src="\u00a0image.png\u00a0">', '<img src="https://example.com/%C2%A0image.png%C2%A0">'),
+    ])
+    def test_html_url_whitespace_matches_browser_resolution(self, body, expected):
+        assert resolve_relative_links(body, "https://example.com") == expected
+
     def test_resolve_markdown_link_absolute_path(self):
         """Resolve markdown links with absolute paths."""
         body = "Check out [this post](/posts/other/)."
@@ -457,3 +515,20 @@ second"""
     assert parsed['published'] is False
     assert parsed['tags'] == ['one, two', 'three']
     assert parsed['description'] == 'first\nsecond'
+
+
+def test_explicit_canonical_still_resolves_bundle_links(tmp_path, monkeypatch):
+    config = tmp_path / "config.yaml"
+    config.write_text("site_base_url: https://example.com\n")
+    monkeypatch.setenv("CRIER_CONFIG", str(config))
+    md = tmp_path / "post.md"
+    md.write_text('---\ntitle: Post\ncanonical_url: https://example.com/post/\n---\n![chart](chart.svg)')
+    assert parse_markdown_file(md).body == '![chart](https://example.com/post/chart.svg)'
+
+
+def test_content_root_accepts_documented_string_path(tmp_path):
+    md = tmp_path / "content" / "post.md"
+    md.parent.mkdir()
+    md.write_text('---\ntitle: Post\n---\nBody')
+    article = parse_markdown_file(md, content_root=str(md.parent), base_url="https://example.com")
+    assert article.canonical_url == "https://example.com/post/"

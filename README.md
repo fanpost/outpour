@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="Outpour logo" width="140">
+</p>
+
 # Outpour
 
 ## Write one article in Markdown. Publish it to Dev.to, Medium, Hashnode, WordPress, Ghost, and Nostr.

@@ -1,135 +1,152 @@
-# Outpour, by Fanpost
+# Outpour
 
-Schedule and cross-post long-form articles to Dev.to, Ghost, WordPress, Hashnode, Medium, Nostr, and more.
+## Write one article in Markdown. Publish it to Dev.to, Medium, Hashnode, WordPress, Ghost, and Nostr.
 
-Outpour is a fork of [Crier](https://github.com/queelius/crier) by Alexander Richard Towell, kept under the MIT license (see LICENSE). The internal Python package is still named `crier` in this scaffold step; the distribution and CLI are `outpour`.
+You wrote the article once. Then you paste it into four different editors, fix the formatting four times, re-upload the images, and re-type the tags. Outpour removes that tax. One Markdown file with frontmatter is the source of truth, and one command publishes or schedules it everywhere, with a ledger that remembers what went where, so a re-run updates your posts instead of duplicating them.
 
-Like a town crier announcing your content to the world.
+**For:** developer-writers, indie bloggers, docs and content teams, and small agencies that publish the same article in several places.
 
-## Getting Started
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/fanpost/outpour)](https://github.com/fanpost/outpour/releases)
+[![Stars](https://img.shields.io/github/stars/fanpost/outpour)](https://github.com/fanpost/outpour/stargazers)
 
-### Quick Setup
+**[Install in about 2 minutes](#quick-start)** · [See the web UI](https://fanpost.github.io/outpour/) · [Want it hosted? Join the waitlist](https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform)
 
-```bash
-pip install crier
-cd your-blog
-crier init
+## See it work
+
+```console
+$ outpour publish post.md --to devto --to nostr-longform --draft --dry-run
+
+Dry Run Preview
+No changes will be made
+
+ File     post.md
+ Title    How I stopped copy-pasting my own articles
+ Status   Draft
+
+              Target Platforms
+┏━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Platform       ┃ Status  ┃ Notes         ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ devto          │ ✓ Ready │ Would publish │
+│ nostr-longform │ ✓ Ready │ Would publish │
+└────────────────┴─────────┴───────────────┘
 ```
 
-The `init` command walks you through:
-- Creating the SQLite registry at `~/.config/crier/crier.db`
-- Detecting your content directories
-- Configuring platforms with API keys
+Drop the `--dry-run` and the same article goes out for real: a Dev.to draft plus a signed Nostr long-form event (NIP-23) on your relays. Run the command again after an edit and Outpour updates those exact posts. It never creates a second copy.
 
-### Outpour setup (install, configure, first publish, scheduling)
+## Why Outpour
+
+- **Nostr, natively.** Long-form publishing to Nostr (NIP-23, kind 30023) with your own key and your own relays. No other scheduler in this class does Nostr at all.
+- **No duplicates, ever.** A local ledger stores every platform post id. Retries, re-runs, and scheduled jobs update or skip instead of re-posting, and a publish that succeeded but failed to record itself is recovered from a receipt, not posted twice.
+- **Free to run, including the scheduler.** MIT-licensed and self-hosted. There is no account and no meter. The scheduler can even run entirely on GitHub Actions, so scheduled posting costs you zero servers.
+- **CLI and a local web UI.** Same engine, your choice: script it from the terminal, or click through Articles, Editor, Schedule, and Platforms screens in the browser.
+- **Built for AI agents too.** An MCP server and a bundled skill let Claude Code and other agents query the ledger and publish on request.
+- **Your keys stay yours.** Platform keys live in your config file or environment variables, on your machine. Outpour sends them only to the platforms themselves.
+
+## Quick start
+
+Prerequisites: Python 3.10 or newer, and Git.
 
 ```bash
 git clone https://github.com/fanpost/outpour
 cd outpour
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev,nostr]"
-.venv/bin/outpour --help
+.venv/bin/pip install -e ".[nostr,ui]"
 ```
 
-Configure keys with env vars or the config file (see `.env.example`
-for every key the MVP needs and its exact format). The config file
-lives at `~/.config/crier/config.yaml` in upstream naming:
+Add the platforms you use to `~/.config/crier/config.yaml` (yes, the config directory still carries the upstream Crier name):
 
 ```yaml
 platforms:
   devto:
-    api_key: "your-devto-key"
-  medium:
-    api_key: "manual"  # copy-paste mode, no token needed
+    api_key: "your-devto-key"        # dev.to/settings/extensions
   nostr-longform:
     api_key: "nsec1...|wss://relay.damus.io,wss://nos.lol"
+  medium:
+    api_key: "manual"                # copy-paste mode, no token needed
 ```
 
-First publish, always dry-run first, then draft:
+Then publish, always with a dry run first:
 
 ```bash
-outpour audit post.md
-outpour publish post.md --to devto --to nostr-longform --draft --dry-run
-outpour publish post.md --to devto --to nostr-longform --draft
+.venv/bin/outpour publish post.md --to devto --to nostr-longform --draft --dry-run
+.venv/bin/outpour publish post.md --to devto --to nostr-longform --draft
 ```
 
-Scheduling: schedule a post, then run due posts from cron (every
-5 minutes is the documented cadence). A re-run never duplicates: if
-the ledger already holds a platform id for the article, Outpour calls
-that platform's update instead of publishing again, and a failed
-update is reported as failed rather than silently re-posted.
+You should see a Dry Run Preview with "✓ Ready" for each configured platform before anything goes out. To schedule instead of publishing now:
 
 ```bash
-outpour publish post.md --to devto --schedule "tomorrow 9am"
-outpour schedule run  # add to cron: */5 * * * * outpour schedule run
+.venv/bin/outpour publish post.md --to devto --schedule "tomorrow 9am"
+.venv/bin/outpour schedule run        # run this from cron, or use the Actions setup below
 ```
 
-### Web UI (optional)
-
-The browser UI reuses the exact same publishing, scheduling, and
-ledger code as the CLI; it adds no new publishing logic. Install
-with the `[ui]` extra and run it:
+Prefer clicking? The web UI runs locally:
 
 ```bash
-.venv/bin/pip install -e ".[ui]"
-.venv/bin/outpour serve            # http://127.0.0.1:8000
-.venv/bin/outpour serve --port 8123
+.venv/bin/outpour serve               # http://127.0.0.1:8000
 ```
 
-First publish from the browser: open Articles, pick an article (or
-write one under New article and save it), tick the platforms, leave
-Draft on for a first run, and press Publish now. Per-platform results
-and error text appear on the results page. Schedule for later works
-the same way from the editor, and the Schedule page lists the queue
-with a cancel button per pending post. The Platforms page shows
-whether each platform is configured and where its key came from;
-key values are never displayed back.
+## Prefer not to install anything?
 
-Security note: the UI has no login of its own, so `serve` binds
-127.0.0.1 only. It is for the machine it runs on; do not put it
-behind a public proxy without adding authentication in front of it.
+- **Click through the UI first:** the [project site](https://fanpost.github.io/outpour/) carries a clickable preview of all four screens.
+- **Run the whole scheduler on GitHub Actions, free:** fork this repo, add one secret, and commit a schedule file. Step-by-step: [articles/README.md](articles/README.md).
 
-### How It Works
+## Platforms at a glance
 
-1. **Your markdown posts** with YAML front matter are the source of truth
-2. **SQLite registry** at `~/.config/crier/crier.db` tracks what's published where (slug-keyed)
-3. **`crier audit`** shows what's missing from which platforms
-4. **`crier publish`** or `audit --publish` publishes content
+- **Long-form:** Dev.to, Hashnode, Medium, Ghost, WordPress, Buttondown (newsletters), Nostr long-form (NIP-23)
+- **Announcements:** Bluesky, Mastodon, Pleroma, Threads, Telegram, Discord, plus LinkedIn and X in manual copy-paste mode
+- Full per-platform details, key formats, and notes are in the [reference](#reference) below.
 
-```bash
-# See what needs publishing
-crier audit
+## How it works
 
-# Publish a file to a platform
-crier publish post.md --to devto
+1. **Your Markdown is the source of truth.** YAML or TOML frontmatter carries the title, description, tags, and canonical URL.
+2. **The ledger remembers.** A small SQLite database records which article went to which platform, with the remote post id and URL.
+3. **The scheduler fires on time.** `outpour schedule run` publishes whatever is due, from cron, from the web UI host, or from a GitHub Actions workflow in this repo.
 
-# Publish to multiple platforms
-crier publish post.md --to devto --to bluesky --to mastodon
+## Honest limitations
 
-# Bulk publish missing content (interactive)
-crier audit --publish
-```
+- **Not on PyPI yet.** Install from this repo with the quick start above.
+- **Medium is publish-only.** Medium's API cannot edit or list posts, so edits happen on Medium itself.
+- **LinkedIn and X have no article API** available to apps like this one, so Outpour handles them in manual mode: it formats the post, copies it to your clipboard, and records it only when you confirm you posted.
+- **The web UI has no login.** It binds to 127.0.0.1 and is meant for your own machine. Put authentication in front of it before exposing it to any network.
+- **Nostr means holding a private key.** Your nsec is a password. Store it like one.
 
-### With Claude Code
+## FAQ
 
-Crier is designed to work with Claude Code for AI-assisted publishing.
-Install the crier plugin from the queelius-plugins marketplace, which
-provides a skill, a `/crier` slash command, a cross-poster agent, and
-an MCP server exposing the registry to Claude. Then ask naturally:
+**Is it free?**
+Yes. Outpour is MIT-licensed and self-hosting is free forever. We are currently validating a paid hosted version (we run the scheduler and UI, you just write). If that is what you want, [join the waitlist](https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform). The form also asks which price point works for you.
 
-- "Cross-post my latest article to all platforms"
-- "What articles haven't been published to Bluesky?"
-- "Publish this post to Mastodon with a good announcement"
+**How is this different from Typefully, Narrareach, or Postiz?**
+Those are hosted, closed products, and most are social-first. Outpour is open source, runs on your machine or your own Actions minutes, is long-form first, and is the only one that publishes natively to Nostr.
 
-The MCP server (`crier mcp`) gives Claude direct query access to the
-registry, and the cross-poster agent can handle bulk publishing
-autonomously with rewrites for short-form platforms.
+**What happens if a publish fails halfway?**
+Each platform result is recorded independently. The successful ones stay published; the failed ones can be retried, and the retry updates or completes them instead of duplicating the successes.
 
-## Installation
+**Can my AI agent use it?**
+Yes. `outpour mcp` starts an MCP server over the ledger, the package ships a skill file, and every command supports `--json` output and a non-interactive `--batch` mode.
 
-```bash
-pip install crier
-```
+**Who should not use Outpour?**
+If you publish to exactly one platform, its own editor is simpler. If you need native LinkedIn articles or X articles posted through an API, no third-party tool can do that today, including this one.
+
+## Your next step
+
+Pick a track:
+
+- **Self-host it, free:** run the [quick start](#quick-start) and publish your first article as a draft today.
+- **Hosted, no install:** [join the waitlist](https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform) and tell us which platform you miss most.
+
+If Outpour saves you an hour of copy-pasting, a star helps the next writer find it.
+
+## Credits
+
+Outpour, by Fanpost, is a fork of [Crier](https://github.com/queelius/crier) by Alexander Richard Towell, kept under the MIT license (see LICENSE). Outpour adds the Nostr long-form platform, idempotent re-publishing guarantees, the local web UI, the GitHub Actions scheduler, and the Fanpost packaging. The internal Python package is still named `crier`, so both `outpour` and `crier` commands work.
+
+---
+
+# Reference
+
+Everything below is the full manual: platform details, configuration, every command, automation, and the reliability model.
 
 ## Supported Platforms
 
@@ -424,8 +441,8 @@ llm:
 ```
 
 **Environment variables** (override config):
-- `OPENAI_API_KEY` — API key (auto-defaults to OpenAI endpoint + gpt-4o-mini)
-- `OPENAI_BASE_URL` — Custom endpoint (e.g., `http://localhost:11434/v1` for Ollama)
+- `OPENAI_API_KEY`: API key (auto-defaults to OpenAI endpoint + gpt-4o-mini)
+- `OPENAI_BASE_URL`: Custom endpoint (e.g., `http://localhost:11434/v1` for Ollama)
 
 ## Bulk Operations
 
@@ -641,9 +658,9 @@ Quiet mode only shows errors and final results. Combine with `--json` for fully 
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success — all operations completed |
-| `1` | Failure — operation failed or validation error |
-| `2` | Partial — some operations succeeded, some failed |
+| `0` | Success: all operations completed |
+| `1` | Failure: operation failed or validation error |
+| `2` | Partial: some operations succeeded, some failed |
 
 ```bash
 # Check exit code in scripts

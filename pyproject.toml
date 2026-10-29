@@ -74,7 +74,6 @@ packages = ["src/crier"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/crier/SKILL.md" = "crier/SKILL.md"
-"src/crier/ui/static" = "crier/ui/static"
 
 [tool.hatch.build.targets.sdist]
 include = [

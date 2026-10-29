@@ -1,0 +1,48 @@
+name: Outpour scheduled publishing
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: outpour-schedule
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Outpour
+        run: pip install ".[nostr,mcp]"
+
+      - name: Publish due posts
+        env:
+          CRIER_DB: ${{ github.workspace }}/.crier/ledger.db
+          CRIER_DEVTO_API_KEY: ${{ secrets.CRIER_DEVTO_API_KEY }}
+          CRIER_MEDIUM_API_KEY: ${{ secrets.CRIER_MEDIUM_API_KEY }}
+          CRIER_HASHNODE_API_KEY: ${{ secrets.CRIER_HASHNODE_API_KEY }}
+        run: outpour schedule run
+
+      - name: Commit publishing state
+        run: |
+          git config user.name "outpour-actions"
+          git config user.email "actions@github.com"
+          git add .crier
+          if git diff --cached --quiet; then
+            echo "No state changes to commit."
+          else
+            git commit -m "Outpour: publishing state"
+            git push
+          fi

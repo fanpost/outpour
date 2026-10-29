@@ -46,6 +46,11 @@ dependencies = [
 mcp = [
     "mcp>=1.0,<2",
 ]
+ui = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
+]
 nostr = [
     "pynostr>=0.6",
 ]
@@ -69,11 +74,13 @@ packages = ["src/crier"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/crier/SKILL.md" = "crier/SKILL.md"
+"src/crier/ui/static" = "crier/ui/static"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "src/crier/**/*.py",
     "src/crier/SKILL.md",
+    "src/crier/ui/static/**",
 ]
 
 [tool.ruff]

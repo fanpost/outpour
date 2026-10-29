@@ -64,6 +64,31 @@ outpour publish post.md --to devto --schedule "tomorrow 9am"
 outpour schedule run  # add to cron: */5 * * * * outpour schedule run
 ```
 
+### Web UI (optional)
+
+The browser UI reuses the exact same publishing, scheduling, and
+ledger code as the CLI; it adds no new publishing logic. Install
+with the `[ui]` extra and run it:
+
+```bash
+.venv/bin/pip install -e ".[ui]"
+.venv/bin/outpour serve            # http://127.0.0.1:8000
+.venv/bin/outpour serve --port 8123
+```
+
+First publish from the browser: open Articles, pick an article (or
+write one under New article and save it), tick the platforms, leave
+Draft on for a first run, and press Publish now. Per-platform results
+and error text appear on the results page. Schedule for later works
+the same way from the editor, and the Schedule page lists the queue
+with a cancel button per pending post. The Platforms page shows
+whether each platform is configured and where its key came from;
+key values are never displayed back.
+
+Security note: the UI has no login of its own, so `serve` binds
+127.0.0.1 only. It is for the machine it runs on; do not put it
+behind a public proxy without adding authentication in front of it.
+
 ### How It Works
 
 1. **Your markdown posts** with YAML front matter are the source of truth

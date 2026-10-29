@@ -5334,5 +5334,26 @@ def feed(path: str | None, output_file: str | None, feed_format: str,
         click.echo(xml)
 
 
+@cli.command()
+@click.option("--port", type=int, default=8000, help="Local port to listen on (default: 8000)")
+def serve(port: int):
+    """Start the Outpour web UI on 127.0.0.1 only.
+
+    The UI has no login of its own, so it binds localhost only and
+    must not be exposed publicly. Requires the [ui] extra:
+    pip install -e ".[ui]".
+    """
+    try:
+        from .ui import run_server
+    except RuntimeError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise SystemExit(1) from exc
+    try:
+        run_server(port)
+    except RuntimeError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise SystemExit(1) from exc
+
+
 if __name__ == "__main__":
     cli()

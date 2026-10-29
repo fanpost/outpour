@@ -215,13 +215,14 @@ class TestDiscoverPackagePlatforms:
     def test_discovers_all_builtins(self):
         """All built-in platforms are discovered.
 
-        Locked to 15: the original 13, plus pleroma (added when the
-        Mastodon-API logic was extracted into the _fediverse base) and nostr.
+        Locked to 16: the original 13, plus pleroma (added when the
+        Mastodon-API logic was extracted into the _fediverse base), nostr,
+        and nostr-longform (Outpour NIP-23, added 2026-10-29).
         The _fediverse base lives in ``_fediverse.py`` and the leading
         underscore keeps it out of discovery.
         """
         result = _discover_package_platforms()
-        assert len(result) == 15
+        assert len(result) == 16
         # _fediverse is internal; the base class must NOT be registered
         assert "fediverseplatform" not in result
         assert "fediverse" not in result
@@ -233,6 +234,7 @@ class TestDiscoverPackagePlatforms:
             "devto", "bluesky", "mastodon", "hashnode", "medium",
             "linkedin", "ghost", "buttondown", "telegram", "discord",
             "threads", "wordpress", "twitter", "pleroma", "nostr",
+            "nostr-longform",
         }
         assert set(result.keys()) == expected
 

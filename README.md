@@ -1,6 +1,8 @@
-# Crier
+# Outpour, by Fanpost
 
-Cross-post your content to dev.to, Ghost, WordPress, Hashnode, Medium, Bluesky, Mastodon, Threads, Telegram, Discord, and more.
+Schedule and cross-post long-form articles to Dev.to, Ghost, WordPress, Hashnode, Medium, Nostr, and more.
+
+Outpour is a fork of [Crier](https://github.com/queelius/crier) by Alexander Richard Towell, kept under the MIT license (see LICENSE). The internal Python package is still named `crier` in this scaffold step; the distribution and CLI are `outpour`.
 
 Like a town crier announcing your content to the world.
 
@@ -18,6 +20,49 @@ The `init` command walks you through:
 - Creating the SQLite registry at `~/.config/crier/crier.db`
 - Detecting your content directories
 - Configuring platforms with API keys
+
+### Outpour setup (install, configure, first publish, scheduling)
+
+```bash
+git clone https://github.com/fanpost/outpour
+cd outpour
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev,nostr]"
+.venv/bin/outpour --help
+```
+
+Configure keys with env vars or the config file (see `.env.example`
+for every key the MVP needs and its exact format). The config file
+lives at `~/.config/crier/config.yaml` in upstream naming:
+
+```yaml
+platforms:
+  devto:
+    api_key: "your-devto-key"
+  medium:
+    api_key: "manual"  # copy-paste mode, no token needed
+  nostr-longform:
+    api_key: "nsec1...|wss://relay.damus.io,wss://nos.lol"
+```
+
+First publish, always dry-run first, then draft:
+
+```bash
+outpour audit post.md
+outpour publish post.md --to devto --to nostr-longform --draft --dry-run
+outpour publish post.md --to devto --to nostr-longform --draft
+```
+
+Scheduling: schedule a post, then run due posts from cron (every
+5 minutes is the documented cadence). A re-run never duplicates: if
+the ledger already holds a platform id for the article, Outpour calls
+that platform's update instead of publishing again, and a failed
+update is reported as failed rather than silently re-posted.
+
+```bash
+outpour publish post.md --to devto --schedule "tomorrow 9am"
+outpour schedule run  # add to cron: */5 * * * * outpour schedule run
+```
 
 ### How It Works
 

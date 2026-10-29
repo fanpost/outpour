@@ -301,8 +301,48 @@ def _outcome(
     )
 
 
-def execute_plan(plan: PublishPlan) -> PublishOutcome:
-    """Publish exactly the prepared article, retaining the actual adapter result."""
+def _find_existing_platform_id(plan: PublishPlan) -> str | None:
+    """Read-only ledger lookup: the platform_id of a prior successful
+    publication of this article to this platform, or None.
+
+    Never creates rows and never raises: any registry problem means
+    "no known prior publication", and the caller falls back to a fresh
+    publish (the recording step will surface registry errors honestly).
+    """
+    if plan.article is None or plan.request is None:
+        return None
+    try:
+        from .registry import find_slug, get_connection
+
+        slug = find_slug(
+            canonical_url=plan.article.canonical_url,
+            source_file=str(plan.request.source_file),
+            title=plan.article.title,
+        )
+        if not slug:
+            return None
+        row = get_connection().execute(
+            "SELECT platform_id FROM publications WHERE slug = ? AND platform = ? "
+            "AND deleted_at IS NULL AND platform_id IS NOT NULL",
+            (slug, plan.platform),
+        ).fetchone()
+        return row["platform_id"] if row else None
+    except Exception:  # noqa: BLE001 — a broken ledger must not block publishing
+        return None
+
+
+def execute_plan(plan: PublishPlan, *, idempotent: bool = False) -> PublishOutcome:
+    """Publish exactly the prepared article, retaining the actual adapter result.
+
+    With idempotent=True (the recording publish path), a prior ledger
+    entry for this article/platform re-publishes via adapter.update()
+    instead of adapter.publish(), so a re-run updates rather than
+    duplicating. If update fails (e.g. the platform does not support
+    updates, like Medium or kind-1 Nostr), the failure is returned
+    honestly and no fresh publish is attempted: duplicating would be
+    worse than reporting the failure. Thread posts are exempt: thread
+    update semantics differ per platform, so they always publish.
+    """
     if plan.error or plan.article is None or plan.adapter is None:
         return _outcome(
             plan, PublishResult(False, plan.platform, error=plan.error or "Incomplete publish plan")
@@ -310,6 +350,8 @@ def execute_plan(plan: PublishPlan) -> PublishOutcome:
     try:
         if plan.thread_posts and len(plan.thread_posts) > 1:
             result = plan.adapter.publish_thread(plan.thread_posts)
+        elif idempotent and (existing_id := _find_existing_platform_id(plan)):
+            result = plan.adapter.update(existing_id, plan.article)
         else:
             result = plan.adapter.publish(plan.article)
     except Exception as exc:  # noqa: BLE001 — isolate adapter and recording failures
@@ -435,7 +477,7 @@ def execute_or_recover(plan: PublishPlan, *, failed_at: str | None = None) -> Pu
         recovered = recover_unrecorded(plan.request, failed_at=failed_at)
         if recovered is not None:
             return recovered
-    return record_outcome(execute_plan(plan))
+    return record_outcome(execute_plan(plan, idempotent=True))
 
 
 def publish_and_record(

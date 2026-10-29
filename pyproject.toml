@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "crier"
+name = "outpour"
 version = "2.1.1"
-description = "Cross-post your content to dev.to, Hashnode, Medium, and more"
+description = "Outpour, by Fanpost: schedule and cross-post long-form articles to Dev.to, Hashnode, Medium, Nostr, and more (fork of Crier)"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -57,11 +57,12 @@ dev = [
 
 [project.scripts]
 crier = "crier.cli:cli"
+outpour = "crier.cli:cli"
 
 [project.urls]
-Homepage = "https://github.com/queelius/crier"
-Repository = "https://github.com/queelius/crier"
-Issues = "https://github.com/queelius/crier/issues"
+Homepage = "https://github.com/fanpost/outpour"
+Repository = "https://github.com/fanpost/outpour"
+Issues = "https://github.com/fanpost/outpour/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/crier"]

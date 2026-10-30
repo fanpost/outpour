@@ -14,7 +14,9 @@ You wrote the article once. Then you paste it into four different editors, fix t
 [![Latest release](https://img.shields.io/github/v/release/fanpost/outpour)](https://github.com/fanpost/outpour/releases)
 [![Stars](https://img.shields.io/github/stars/fanpost/outpour)](https://github.com/fanpost/outpour/stargazers)
 
-**[Install in about 2 minutes](#quick-start)** · [See the web UI](https://fanpost.github.io/outpour/) · [Want it hosted? Join the waitlist](https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform)
+**[Install in about 2 minutes](#quick-start)** · [See the web UI](https://fanpost.github.io/outpour/)
+
+## [Want it hosted? Join the waitlist](https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform)
 
 > **Prefer not to install anything?** A hosted version is in the works: we run Outpour, you sign in, connect your accounts once, and just write. Expected price $19/mo, and waitlist members lock that founding price. [Join the hosted waitlist](https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform): four short questions, one email when it opens, nothing else.
 

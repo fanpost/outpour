@@ -27,6 +27,8 @@
   a { color: #7fd1c8; }
   .cta { display: inline-block; margin-top: 10px; background: #0f766e; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 8px; font-family: Verdana, Geneva, sans-serif; font-size: 15px; }
   .cta:hover { background: #0d655e; }
+  .cta.alt { background: transparent; border: 1px solid #0f766e; color: #7fd1c8; margin-left: 10px; }
+  .cta.alt:hover { background: #0c2b28; }
   footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid #22334f; font-size: 14px; color: #8494ab; }
   @media (max-width: 560px) { .cards { grid-template-columns: 1fr; } h1 { font-size: 38px; } }
 </style>
@@ -39,8 +41,7 @@
   <p class="tagline">Write one long-form article in markdown. Schedule it once. Publish it everywhere.</p>
 
   <p>Outpour is a free, open source tool for writers who post the same article in several places. You write it once, in plain Markdown. Outpour sends it to each site for you, now or at a time you pick, and keeps a list of where every post landed. Run it again after an edit and it updates those posts instead of posting twice.</p>
-  <p><a class="cta" href="https://github.com/fanpost/outpour">Get Outpour on GitHub</a></p>
-  <p>Rather have us run it for you? <a href="#hosted">Join the hosted waitlist</a>.</p>
+  <p><a class="cta" href="https://github.com/fanpost/outpour">Get Outpour on GitHub</a><a class="cta alt" href="#hosted">Join the hosted waitlist</a></p>
 
   <h2>Where it publishes</h2>
   <div class="cards">

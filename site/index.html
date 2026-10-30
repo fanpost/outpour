@@ -38,23 +38,23 @@
   <h1>Out<span class="pour">pour</span></h1>
   <p class="tagline">Write one long-form article in markdown. Schedule it once. Publish it everywhere.</p>
 
-  <p>Outpour is an open source article scheduler for writers who publish in more than one place. One markdown file with frontmatter is the single source of truth. Outpour fans it out to each platform, records what went where, and never posts the same article twice.</p>
+  <p>Outpour is a free, open source tool for writers who post the same article in several places. You write it once, in plain Markdown. Outpour sends it to each site for you, now or at a time you pick, and keeps a list of where every post landed. Run it again after an edit and it updates those posts instead of posting twice.</p>
   <p><a class="cta" href="https://github.com/fanpost/outpour">Get Outpour on GitHub</a></p>
+  <p>Rather have us run it for you? <a href="#hosted">Join the hosted waitlist</a>.</p>
 
   <h2>Where it publishes</h2>
   <div class="cards">
-    <div class="card"><h3>Dev.to</h3><p>Full articles with tags, canonical URL and cover image, draft or live.</p></div>
-    <div class="card"><h3>Nostr (NIP-23)</h3><p>Native long-form events (kind 30023), signed with your key and sent to your relays. No account approval, no fees, no OAuth.</p></div>
-    <div class="card"><h3>Medium and Hashnode</h3><p>Supported through their APIs, with a manual copy-paste fallback for Medium.</p></div>
-    <div class="card"><h3>WordPress and Ghost</h3><p>Carried over from the upstream engine, ready when you are.</p></div>
+    <div class="card"><h3>Dev.to</h3><p>Your full article, with tags and cover image. Send it as a draft first, or publish it live.</p></div>
+    <div class="card"><h3>Nostr (NIP-23)</h3><p>Long-form posts on Nostr, signed with your own key. No sign-up, no fees, no approval.</p></div>
+    <div class="card"><h3>Medium and Hashnode</h3><p>Full articles through their official connections. Medium also has a simple copy-and-paste option.</p></div>
+    <div class="card"><h3>WordPress and Ghost</h3><p>Your own blog is covered too.</p></div>
   </div>
 
-  <h2>How it works</h2>
+  <h2>How it works, in three steps</h2>
   <ul>
-    <li>Write in markdown, describe the article once in frontmatter.</li>
-    <li>Publish now, or schedule for later: <code>outpour publish post.md --to devto --to nostr-longform --schedule "tomorrow 9am"</code></li>
-    <li>Re-running is safe. The ledger remembers each platform post id, so a retry updates or skips instead of duplicating.</li>
-    <li>Partial failures are reported honestly, per platform, with the live URL of everything that did go out.</li>
+    <li><strong>Write once.</strong> Your article is one Markdown file, the plain-text format every writing and dev tool already uses.</li>
+    <li><strong>Pick where and when.</strong> Choose the platforms, publish now, or set a time: <code>outpour publish post.md --to devto --to nostr-longform --schedule "tomorrow 9am"</code></li>
+    <li><strong>See the links.</strong> Outpour posts everywhere and shows you the live link for each place. If one site fails, you see exactly which one and why.</li>
   </ul>
 
   <h2>Quickstart</h2>
@@ -62,15 +62,22 @@
 export CRIER_DEVTO_API_KEY=your-devto-key
 outpour publish post.md --to devto --draft</pre>
 
-  <h2>Hosted on GitHub, free</h2>
-  <p>This page is served by GitHub Pages. The scheduler itself can also run on GitHub Actions: this repository carries a scheduled workflow that wakes up every 15 minutes, publishes whatever is due, and commits the publishing state back. No server, no hosting bill.</p>
+  <h2>Free option: let GitHub run the schedule</h2>
+  <p>This page is served by GitHub Pages. The scheduler can run there too: this repository carries a workflow that wakes up every 15 minutes, publishes whatever is due, and saves the results back. No server, no hosting bill.</p>
 
-  <h2>Hosted version?</h2>
-  <p>Outpour is free and self-hosted, and stays that way. We are checking whether a hosted version is worth building: we run the scheduler and the web UI, you just write. Tell us if you want it, and what it would be worth to you.</p>
+  <h2 id="hosted">Or let us run it for you</h2>
+  <p>Self-hosting still means installing Python and keeping something running. The hosted version skips all of that:</p>
+  <ul>
+    <li>Sign in and connect your accounts once: Dev.to, Medium, Hashnode, Nostr, WordPress, Ghost.</li>
+    <li>Write in your browser or drop in a Markdown file. Pick a time. Done.</li>
+    <li>We run the scheduler around the clock and show you the live link for every post.</li>
+  </ul>
+  <p>We build it if enough writers want it. Expected price: $19 a month, and waitlist members lock that founding price. Join the list and you get one email when it opens. Nothing else, no newsletter.</p>
   <p><a class="cta" href="https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform">Join the hosted waitlist</a></p>
+  <p class="dim" style="font-size:14px;color:#8494ab">Four short questions, about 30 seconds. The last one asks which platform you miss most, and it shapes what we build next.</p>
 
   <h2>Status</h2>
-  <p>Current release: <a href="https://github.com/fanpost/outpour/releases/tag/v0.1.0">v0.1.0</a>, with the test suite green at 1507 tests. Outpour is a fork of the MIT-licensed <a href="https://github.com/queelius/crier">Crier</a> and keeps that license and attribution.</p>
+  <p>Current release: <a href="https://github.com/fanpost/outpour/releases/tag/v0.2.1">v0.2.1</a>, with the test suite green at 1520 tests. Outpour is a fork of the MIT-licensed <a href="https://github.com/queelius/crier">Crier</a> and keeps that license and attribution.</p>
 
   <footer>Outpour, by Fanpost. Open source under the MIT license. Built on Crier by queelius.</footer>
 </div>

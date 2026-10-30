@@ -6,7 +6,7 @@
 
 ## Write one article in Markdown. Publish it to Dev.to, Medium, Hashnode, WordPress, Ghost, and Nostr.
 
-You wrote the article once. Then you paste it into four different editors, fix the formatting four times, re-upload the images, and re-type the tags. Outpour removes that tax. One Markdown file with frontmatter is the source of truth, and one command publishes or schedules it everywhere, with a ledger that remembers what went where, so a re-run updates your posts instead of duplicating them.
+You wrote the article once. Then you paste it into four different editors, fix the formatting four times, re-upload the images, and re-type the tags. Outpour removes that tax: write it once in Markdown, run one command, and it goes to every platform, now or at a scheduled time. Run the command again after an edit and Outpour updates those exact posts. It never creates a second copy.
 
 **For:** developer-writers, indie bloggers, docs and content teams, and small agencies that publish the same article in several places.
 
@@ -15,6 +15,8 @@ You wrote the article once. Then you paste it into four different editors, fix t
 [![Stars](https://img.shields.io/github/stars/fanpost/outpour)](https://github.com/fanpost/outpour/stargazers)
 
 **[Install in about 2 minutes](#quick-start)** · [See the web UI](https://fanpost.github.io/outpour/) · [Want it hosted? Join the waitlist](https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform)
+
+> **Prefer not to install anything?** A hosted version is in the works: we run Outpour, you sign in, connect your accounts once, and just write. Expected price $19/mo, and waitlist members lock that founding price. [Join the hosted waitlist](https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform): four short questions, one email when it opens, nothing else.
 
 ## See it work
 
@@ -42,7 +44,7 @@ Drop the `--dry-run` and the same article goes out for real: a Dev.to draft plus
 ## Why Outpour
 
 - **Nostr, natively.** Long-form publishing to Nostr (NIP-23, kind 30023) with your own key and your own relays. No other scheduler in this class does Nostr at all.
-- **No duplicates, ever.** A local ledger stores every platform post id. Retries, re-runs, and scheduled jobs update or skip instead of re-posting, and a publish that succeeded but failed to record itself is recovered from a receipt, not posted twice.
+- **No duplicates, ever.** Outpour keeps a list of every post it has made on every platform. Retries, re-runs, and scheduled jobs update or skip, they never post twice.
 - **Free to run, including the scheduler.** MIT-licensed and self-hosted. There is no account and no meter. The scheduler can even run entirely on GitHub Actions, so scheduled posting costs you zero servers.
 - **CLI and a local web UI.** Same engine, your choice: script it from the terminal, or click through Articles, Editor, Schedule, and Platforms screens in the browser.
 - **Built for AI agents too.** An MCP server and a bundled skill let Claude Code and other agents query the ledger and publish on request.

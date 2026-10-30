@@ -28,7 +28,20 @@ label{display:block;margin:.6rem 0 .2rem} input[type=text],textarea{width:100%;p
 textarea{height:22rem;font-family:monospace} button{padding:.4rem 1rem;margin-top:.8rem}
 fieldset{margin:1rem 0} .card{border:1px solid #ccc;padding:1rem;margin:1rem 0}
 button.primary{background:#0b5cab;color:#fff;border:1px solid #0b5cab}
+.hosted{color:#444;font-size:.95rem}
 """
+
+WAITLIST_URL = (
+    "https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-"
+    "idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform"
+)
+
+HOSTED_STRIP = (
+    "<hr><p class='hosted'>Running Outpour on your own machine. Prefer not to? "
+    "A hosted version is in the works: we run it, you just write. "
+    f"<a href='{WAITLIST_URL}' target='_blank' rel='noopener'>"
+    "Join the hosted waitlist</a></p>"
+)
 
 
 def _esc(value: Any) -> str:
@@ -44,7 +57,7 @@ def _page(title: str, body: str) -> str:
         "<!doctype html><html><head><meta charset='utf-8'>"
         f"<title>{_esc(title)} - Outpour</title><style>{CSS}</style>"
         f"<script src='/static/app.js' defer></script></head><body>"
-        f"<h1>Outpour</h1>{nav}<h2>{_esc(title)}</h2>{body}</body></html>"
+        f"<h1>Outpour</h1>{nav}<h2>{_esc(title)}</h2>{body}{HOSTED_STRIP}</body></html>"
     )
 
 
@@ -321,6 +334,10 @@ def create_app(service: Any = None) -> FastAPI:
                 f"<td>{configured}</td><td>{_esc(platform['mode'])}</td><td>{_esc(source)}</td></tr>"
             )
         body = (
+            "<p>Outpour sends each article to the platforms you tick in the editor. "
+            "Full articles go to the long-form platforms; announcement platforms post "
+            "a short version with a link back. A platform marked as not configured "
+            "needs its key added before it can publish.</p>"
             "<p class='dim'>Key values are never shown here. Configure keys with "
             "<code>outpour config set platforms.&lt;name&gt;.api_key &lt;key&gt;</code> "
             "or the matching CRIER_&lt;PLATFORM&gt;_API_KEY environment variable.</p>"

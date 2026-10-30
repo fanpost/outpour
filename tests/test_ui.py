@@ -237,6 +237,14 @@ def test_platforms_page_never_shows_key_values(client):
     assert FakeService._secret not in response.text
 
 
+def test_pages_carry_hosted_waitlist_strip(client):
+    for route in ("/articles", "/platforms", "/schedule"):
+        response = client.get(route)
+        assert response.status_code == 200
+        assert "Join the hosted waitlist" in response.text
+        assert "docs.google.com/forms" in response.text
+
+
 def test_static_js_served(client):
     response = client.get("/static/app.js")
     assert response.status_code == 200

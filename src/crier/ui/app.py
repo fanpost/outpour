@@ -27,6 +27,7 @@ th,td{border:1px solid #ccc;padding:.4rem;text-align:left;vertical-align:top}
 label{display:block;margin:.6rem 0 .2rem} input[type=text],textarea{width:100%;padding:.4rem}
 textarea{height:22rem;font-family:monospace} button{padding:.4rem 1rem;margin-top:.8rem}
 fieldset{margin:1rem 0} .card{border:1px solid #ccc;padding:1rem;margin:1rem 0}
+button.primary{background:#0b5cab;color:#fff;border:1px solid #0b5cab}
 """
 
 
@@ -52,7 +53,13 @@ def _platform_checkboxes(service: Any, selected: set[str] | None = None, disable
     off = " disabled" if disabled else ""
     for platform in service.list_platforms():
         name = platform["name"]
-        checked = " checked" if selected is None or name in selected else ""
+        # Default path (no explicit selection): only configured platforms
+        # are checked, so one click publishes to everything that can work
+        # and an unconfigured platform is never silently included.
+        if selected is None:
+            checked = " checked" if platform.get("configured") else ""
+        else:
+            checked = " checked" if name in selected else ""
         hint = "" if platform["configured"] else " (not configured)"
         parts.append(
             f"<label><input type='checkbox' name='platforms' value='{_esc(name)}'{checked}{off}> "
@@ -62,14 +69,23 @@ def _platform_checkboxes(service: Any, selected: set[str] | None = None, disable
     return "".join(parts)
 
 
-def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool) -> str:
-    is_new = article is None
+def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, error: str = "") -> str:
+    # An article dict with no path (e.g. rebuilt from a failed save) is
+    # treated as new, so its filename field stays visible and its
+    # submitted values are preserved instead of discarded with the error.
+    is_new = article is None or not article.get("path")
     path = "" if is_new else article["path"]
     tags = ", ".join(article["tags"]) if article and article.get("tags") else ""
-    notice = "<p class='ok'>Saved.</p>" if saved else ""
+    if error:
+        notice = f"<p class='bad'>{_esc(error)}</p>"
+    elif saved:
+        notice = "<p class='ok'>Saved.</p>"
+    else:
+        notice = ""
+    filename_value = _esc(article.get("filename", "")) if article else ""
     filename_field = (
         "<label>Filename (under the first content path, .md added if missing)</label>"
-        "<input type='text' name='filename' placeholder='my-article'>"
+        f"<input type='text' name='filename' placeholder='my-article' value='{filename_value}'>"
         if is_new
         else ""
     )
@@ -89,7 +105,7 @@ def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool) -> s
         f"<input type='text' name='cover_image' value='{_esc(article['cover_image']) if article else ''}'>"
         "<label>Body (markdown)</label>"
         f"<textarea name='body'>{_esc(article['body']) if article else ''}</textarea>"
-        "<button type='submit'>Save article</button></form>"
+        "<button type='submit' class='primary'>Save article</button></form>"
         + _action_forms(service, path, enabled=not is_new)
     )
 
@@ -203,7 +219,22 @@ def create_app(service: Any = None) -> FastAPI:
         try:
             saved = svc.save_article(path, fields, form.get("body") or "", form.get("filename") or None)
         except ValueError as exc:
-            return HTMLResponse(_page("Editor", f"<p class='bad'>{_esc(exc)}</p>"), status_code=400)
+            # Preserve everything the user typed: rebuild the form from
+            # the submitted fields instead of returning a bare error page.
+            draft = {
+                "path": path or "",
+                "title": fields["title"],
+                "description": fields["description"],
+                "tags": [tag.strip() for tag in fields["tags"].split(",") if tag.strip()],
+                "canonical_url": fields["canonical_url"],
+                "cover_image": fields["cover_image"],
+                "body": form.get("body") or "",
+                "filename": form.get("filename") or "",
+            }
+            return HTMLResponse(
+                _page("Editor", _editor_form(svc, draft, False, error=str(exc))),
+                status_code=400,
+            )
         return RedirectResponse(f"/editor?path={_esc(str(saved))}&saved=1", status_code=303)
 
     @app.post("/publish", response_class=HTMLResponse)

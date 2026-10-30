@@ -59,6 +59,8 @@ class FakeService:
         return None
 
     def save_article(self, path, fields, body, filename=None):
+        if body == "trigger-error":
+            raise ValueError("Cannot save: bad path")
         self.saved.append({"path": path, "fields": fields, "body": body, "filename": filename})
         return Path(path or f"/content/{filename or 'new'}.md")
 
@@ -158,6 +160,35 @@ def test_editor_new_page_has_platform_checkboxes(client):
     assert response.status_code == 200
     assert "name='platforms'" in response.text
     assert "Save the article first" in response.text
+
+
+def test_editor_defaults_to_configured_platforms_only(client):
+    import re
+
+    response = client.get("/editor/new")
+    assert response.status_code == 200
+    assert re.search(r"value='devto'[^>]*checked", response.text)
+    assert re.search(r"value='medium'[^>]*checked", response.text)
+    assert not re.search(r"value='hashnode'[^>]*checked", response.text)
+
+
+def test_editor_save_error_preserves_input(client):
+    response = client.post(
+        "/editor",
+        data={
+            "path": "/content/first.md",
+            "title": "Kept Title",
+            "description": "",
+            "tags": "ai",
+            "canonical_url": "",
+            "cover_image": "",
+            "body": "trigger-error",
+        },
+    )
+    assert response.status_code == 400
+    assert "Cannot save: bad path" in response.text
+    assert "Kept Title" in response.text
+    assert "trigger-error" in response.text
 
 
 def test_publish_results_show_success_and_failure_honestly(client):

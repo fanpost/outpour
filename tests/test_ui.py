@@ -22,6 +22,7 @@ class FakeService:
     def __init__(self):
         self.cancelled: list[str] = []
         self.saved: list[dict] = []
+        self.imported: list[dict] = []
 
     def list_articles(self):
         return [
@@ -63,6 +64,14 @@ class FakeService:
             raise ValueError("Cannot save: bad path")
         self.saved.append({"path": path, "fields": fields, "body": body, "filename": filename})
         return Path(path or f"/content/{filename or 'new'}.md")
+
+    def import_markdown(self, filename, text):
+        if not text.strip():
+            raise ValueError("That file is empty, so there is nothing to import.")
+        if not filename.lower().endswith((".md", ".markdown")):
+            raise ValueError("Only Markdown files (.md) can be imported.")
+        self.imported.append({"filename": filename, "text": text})
+        return Path(f"/content/{Path(filename).stem}.md")
 
     def list_platforms(self):
         return [
@@ -260,6 +269,45 @@ def test_publish_and_schedule_forms_carry_progress_state(client):
     assert response.status_code == 200
     assert "data-progress='Publishing...'" in response.text
     assert "data-progress='Scheduling...'" in response.text
+
+
+def test_editor_new_page_has_import_form(client):
+    response = client.get("/editor/new")
+    assert response.status_code == 200
+    assert "action='/editor/import'" in response.text
+    assert "type='file'" in response.text
+
+
+def test_import_markdown_redirects_into_editor(client):
+    response = client.post(
+        "/editor/import",
+        files={"file": ("note.md", "---\ntitle: Imported\n---\n\nBody.\n", "text/markdown")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/editor?path=/content/note.md")
+
+
+def test_import_rejects_non_markdown_and_empty_files(client):
+    bad = client.post("/editor/import", files={"file": ("note.txt", "hello", "text/plain")})
+    assert bad.status_code == 400
+    assert "Only Markdown files" in bad.text
+    empty = client.post("/editor/import", files={"file": ("note.md", "", "text/markdown")})
+    assert empty.status_code == 400
+    assert "empty" in empty.text
+
+
+def test_service_import_markdown_keeps_content_and_renames_on_collision(tmp_path, monkeypatch):
+    content = tmp_path / "content"
+    content.mkdir()
+    monkeypatch.setattr(ui_service.config, "get_content_paths", lambda: [str(content)])
+    monkeypatch.setattr(ui_service.config, "get_project_root", lambda: tmp_path)
+    text = "---\ntitle: Kept\nslug: custom-key\n---\n\nBody.\n"
+    first = ui_service.import_markdown("post.markdown", text)
+    assert first.name == "post.md"
+    assert first.read_text() == text
+    second = ui_service.import_markdown("post.md", text)
+    assert second.name == "post-2.md"
 
 
 def test_static_js_served(client):

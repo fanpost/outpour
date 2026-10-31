@@ -195,6 +195,33 @@ def save_article(
     return resolved
 
 
+def import_markdown(filename: str, text: str) -> Path:
+    """Save an imported Markdown file into the first content path.
+
+    The content is stored unchanged: frontmatter and any keys the
+    editor does not know about survive, unlike an editor save, which
+    rebuilds the frontmatter from the known fields. The name is
+    reduced to its basename and normalized to .md, and a numeric
+    suffix is added rather than overwriting an existing article.
+    """
+    if not text.strip():
+        raise ValueError("That file is empty, so there is nothing to import.")
+    name = Path(filename or "").name
+    if Path(name).suffix.lower() not in (".md", ".markdown"):
+        raise ValueError("Only Markdown files (.md) can be imported.")
+    stem = Path(name).stem.strip() or "untitled"
+    roots = _content_roots()
+    base = roots[0] if roots else Path.cwd().resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    candidate = base / f"{stem}.md"
+    counter = 2
+    while candidate.exists():
+        candidate = base / f"{stem}-{counter}.md"
+        counter += 1
+    candidate.write_text(text)
+    return candidate.resolve()
+
+
 def list_platforms() -> list[dict[str, Any]]:
     """Every known platform with configured/mode/source only.
 
@@ -331,6 +358,9 @@ class UIService:
         self, path: str | None, fields: dict[str, Any], body: str, filename: str | None = None
     ) -> Path:
         return save_article(path, fields, body, filename)
+
+    def import_markdown(self, filename: str, text: str) -> Path:
+        return import_markdown(filename, text)
 
     def list_platforms(self) -> list[dict[str, Any]]:
         return list_platforms()

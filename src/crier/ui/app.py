@@ -109,8 +109,19 @@ def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, erro
         if is_new
         else ""
     )
+    import_card = (
+        "<div class='card'><h3>Import a Markdown file</h3>"
+        "<form method='post' action='/editor/import' enctype='multipart/form-data'>"
+        "<input type='file' name='file' accept='.md,.markdown' required>"
+        "<button type='submit'>Import .md</button></form>"
+        "<p class='dim'>From Obsidian, Typora, VS Code, or any other Markdown "
+        "editor: the file is saved into your content folder unchanged, "
+        "frontmatter included, and opened here.</p></div>"
+        if is_new
+        else ""
+    )
     return (
-        f"{notice}<form method='post' action='/editor'>"
+        f"{notice}{import_card}<form method='post' action='/editor'>"
         f"<input type='hidden' name='path' value='{_esc(path)}'>"
         f"{filename_field}"
         "<label>Title</label>"
@@ -255,6 +266,32 @@ def create_app(service: Any = None) -> FastAPI:
                 _page("Editor", _editor_form(svc, draft, False, error=str(exc))),
                 status_code=400,
             )
+        return RedirectResponse(f"/editor?path={_esc(str(saved))}&saved=1", status_code=303)
+
+    @app.post("/editor/import")
+    async def editor_import(request: Request):
+        form = await request.form()
+        upload = form.get("file")
+
+        def fail(message: str) -> HTMLResponse:
+            return HTMLResponse(
+                _page("New article", _editor_form(svc, None, False, error=message)),
+                status_code=400,
+            )
+
+        if upload is None or not getattr(upload, "filename", ""):
+            return fail("Choose a Markdown file to import.")
+        data = await upload.read()
+        if len(data) > 2_000_000:
+            return fail("That file is too large to import (2 MB maximum).")
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return fail("That file is not UTF-8 text, so Outpour cannot read it as Markdown.")
+        try:
+            saved = svc.import_markdown(upload.filename, text)
+        except ValueError as exc:
+            return fail(str(exc))
         return RedirectResponse(f"/editor?path={_esc(str(saved))}&saved=1", status_code=303)
 
     @app.post("/publish", response_class=HTMLResponse)

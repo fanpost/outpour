@@ -52,6 +52,16 @@ Drop the `--dry-run` and the same article goes out for real: a Dev.to draft plus
 - **Built for AI agents too.** An MCP server and a bundled skill let Claude Code and other agents query the ledger and publish on request.
 - **Your keys stay yours.** Platform keys live in your config file or environment variables, on your machine. Outpour sends them only to the platforms themselves.
 
+## Connect your favorite editor
+
+Outpour reads plain Markdown files, so it is compatible with every Markdown editor, with no plugin to install. How it connects depends on how the editor stores files:
+
+- **Folder editors connect live:** point a content path at the folder once. Obsidian, VS Code (including Foam), Zettlr, iA Writer, Logseq, the content folder of a static site (Hugo, Jekyll, Astro, Eleventy), and any Git repository of Markdown.
+- **Single-file editors connect by import:** Typora, MarkText, Ghostwriter, MacDown, Apostrophe, ReText, and plain text editors (Sublime Text, Vim, Neovim, Emacs, Notepad++). Use the import button on the web UI's New article screen, or drop the file into the content folder.
+- **Web editors connect by export:** HackMD, HedgeDoc, StackEdit, Dillinger.
+- **Database apps connect one way, by export:** Notion, Bear, Ulysses, Scrivener, Joplin. They store notes in a database, not files, so their Markdown export feeds Outpour's import; it is not a live sync.
+- **AI tools:** Claude Code and other MCP clients use the bundled MCP server; ChatGPT and Claude drafts arrive as .md files like any other article.
+
 ## Quick start
 
 Prerequisites: Python 3.10 or newer, and Git.

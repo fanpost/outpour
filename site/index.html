@@ -58,6 +58,16 @@
     <li><strong>See the links.</strong> Outpour posts everywhere and shows you the live link for each place. If one site fails, you see exactly which one and why.</li>
   </ul>
 
+  <h2>Connect your favorite editor</h2>
+  <p>Outpour reads plain Markdown files, so it is compatible with every Markdown editor. There is no plugin to install inside your editor. How it connects depends on how the editor stores files:</p>
+  <ul>
+    <li><strong>Folder editors connect live.</strong> Point Outpour at the folder once and every file in it is ready to publish: Obsidian, VS Code (including Foam), Zettlr, iA Writer, Logseq. The same goes for the content folder of a static site (Hugo, Jekyll, Astro, Eleventy) and for any Git repository of Markdown.</li>
+    <li><strong>Single-file editors connect by import.</strong> Write in Typora, MarkText, Ghostwriter, MacDown, Apostrophe, or ReText, or in a plain text editor like Sublime Text, Vim, Neovim, Emacs, or Notepad++, then bring the file in with the import button in the web UI, or drop it into the content folder.</li>
+    <li><strong>Web editors connect by export.</strong> HackMD, HedgeDoc, StackEdit, and Dillinger export Markdown; Outpour imports it.</li>
+    <li><strong>Database apps connect one way, by export.</strong> Notion, Bear, Ulysses, Scrivener, and Joplin keep notes in their own database rather than as files, so the route is their Markdown export into Outpour's import. Honest limit: that is a one-way trip, not a live sync.</li>
+    <li><strong>AI tools connect directly.</strong> Claude Code and other MCP clients publish through Outpour's MCP server. Drafts from ChatGPT or Claude come in as .md files, like any other article.</li>
+  </ul>
+
   <h2>Quickstart</h2>
   <pre>pip install git+https://github.com/fanpost/outpour
 export CRIER_DEVTO_API_KEY=your-devto-key

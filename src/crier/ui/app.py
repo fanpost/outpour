@@ -129,12 +129,12 @@ def _action_forms(service: Any, path: str, enabled: bool = True) -> str:
     note = "" if enabled else "<p class='dim'>Save the article first to publish or schedule it.</p>"
     return (
         "<div class='card'><h3>Publish now</h3>" + note +
-        "<form method='post' action='/publish' data-confirm='Publish now to the selected platforms?'>"
+        "<form method='post' action='/publish' data-confirm='Publish now to the selected platforms?' data-progress='Publishing...'>"
         f"<input type='hidden' name='path' value='{_esc(path)}'>{boxes}"
         f"<label><input type='checkbox' name='draft' value='1'{off}> Draft (where the platform supports it)</label>"
         f"<button type='submit'{off}>Publish now</button></form></div>"
         "<div class='card'><h3>Schedule for later</h3>" + note +
-        "<form method='post' action='/schedule' data-confirm='Schedule for the selected platforms?'>"
+        "<form method='post' action='/schedule' data-confirm='Schedule for the selected platforms?' data-progress='Scheduling...'>"
         f"<input type='hidden' name='path' value='{_esc(path)}'>{boxes}"
         "<label>When (for example: 2026-11-02 09:00, tomorrow 9am, in 2 hours)</label>"
         f"<input type='text' name='when' required{off}>"

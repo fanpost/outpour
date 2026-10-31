@@ -245,10 +245,25 @@ def test_pages_carry_hosted_waitlist_strip(client):
         assert "docs.google.com/forms" in response.text
 
 
+def test_publish_and_schedule_forms_carry_progress_state(client):
+    response = client.get("/editor", params={"path": "/content/first.md"})
+    assert response.status_code == 200
+    assert "data-progress='Publishing...'" in response.text
+    assert "data-progress='Scheduling...'" in response.text
+
+
 def test_static_js_served(client):
     response = client.get("/static/app.js")
     assert response.status_code == 200
     assert "confirm" in response.text
+
+
+def test_static_js_handles_progress_state(client):
+    response = client.get("/static/app.js")
+    assert response.status_code == 200
+    assert "data-progress" in response.text
+    assert "disabled" in response.text
+    assert "defaultPrevented" in response.text
 
 
 def test_service_discovers_articles_in_content_dir(tmp_path, monkeypatch):

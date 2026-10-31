@@ -1,5 +1,15 @@
 """Content converters for crier."""
 
-from .markdown import parse_markdown_file, parse_front_matter
+from .markdown import (
+    bootstrap_front_matter,
+    derive_bootstrap_title,
+    parse_front_matter,
+    parse_markdown_file,
+)
 
-__all__ = ["parse_markdown_file", "parse_front_matter"]
+__all__ = [
+    "bootstrap_front_matter",
+    "derive_bootstrap_title",
+    "parse_front_matter",
+    "parse_markdown_file",
+]

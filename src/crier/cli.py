@@ -224,12 +224,12 @@ def init():
             console.print(f"[green]✓[/green] File extensions: {', '.join(DEFAULT_FILE_EXTENSIONS)}")
         else:
             console.print("[dim]No content paths selected. You can add them later with:[/dim]")
-            console.print("[dim]  crier config content add <directory>[/dim]")
+            console.print("[dim]  outpour config content add <directory>[/dim]")
     else:
         console.print("[yellow]No content directories found.[/yellow]")
         console.print(
             "[dim]You can add them later with:"
-            " crier config content add <directory>[/dim]"
+            " outpour config content add <directory>[/dim]"
         )
 
     console.print()
@@ -411,6 +411,79 @@ def init():
     console.print("[dim]  crier skill install[/dim]")
     console.print("[dim]Then just ask Claude to cross-post your content![/dim]")
     console.print()
+
+
+@cli.command()
+@click.argument("paths", nargs=-1, required=True, type=click.Path(exists=True))
+@click.option("--dry-run", is_flag=True, help="Show what would change without writing files")
+def bootstrap(paths: tuple[str, ...], dry_run: bool):
+    """Add a title front-matter block to Markdown files that lack one.
+
+    The title comes from the file's first heading, or from its filename
+    when there is no heading. Files that already carry a title are left
+    untouched, and body text is never altered. Give a file or a directory;
+    directories are scanned recursively for .md files, skipping names
+    that match the configured exclude patterns.
+    """
+    from rich.markup import escape as _escape
+
+    from .converters import bootstrap_front_matter
+    from .utils import matches_exclude_pattern
+
+    exclude_patterns = []
+    try:
+        from .config import get_exclude_patterns
+
+        exclude_patterns = get_exclude_patterns() or []
+    except Exception:
+        exclude_patterns = []
+
+    files: list[Path] = []
+    for raw in paths:
+        path = Path(raw)
+        if path.is_file():
+            files.append(path)
+        else:
+            for candidate in sorted(path.rglob("*.md")):
+                if candidate.is_file() and not matches_exclude_pattern(
+                    candidate.name, exclude_patterns
+                ):
+                    files.append(candidate)
+
+    added = 0
+    skipped = 0
+    for path in files:
+        try:
+            original = path.read_text()
+        except OSError as exc:
+            console.print(f"[red]Cannot read {path}: {exc}[/red]")
+            skipped += 1
+            continue
+        new_content, changed, detail = bootstrap_front_matter(
+            original, path.stem
+        )
+        if not changed:
+            console.print(f"[dim]Skipped {_escape(str(path))} ({_escape(detail)})[/dim]")
+            skipped += 1
+            continue
+        if dry_run:
+            console.print(
+                f"[dim]Would add title {_escape(detail)!r} to {_escape(str(path))}[/dim]"
+            )
+        else:
+            try:
+                path.write_text(new_content)
+            except OSError as exc:
+                console.print(f"[red]Cannot write {path}: {exc}[/red]")
+                skipped += 1
+                continue
+            console.print(
+                f"[green]Added title {_escape(detail)!r} to {_escape(str(path))}[/green]"
+            )
+        added += 1
+
+    verb = "would be added" if dry_run else "added"
+    console.print(f"\n{added} {verb}, {skipped} skipped")
 
 
 @cli.command()
@@ -826,7 +899,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
             )
             console.print(
                 "[dim]To include it in audits, run:"
-                " crier config content add <directory>[/dim]"
+                " outpour config content add <directory>[/dim]"
             )
             console.print()
 
@@ -2123,7 +2196,7 @@ def content():
 def content_add(path: str):
     """Add a content path.
 
-    Example: crier config content add content/posts
+    Example: outpour config content add content/posts
     """
     add_content_path(path)
     console.print(f"[green]Added content path: {path}[/green]")
@@ -2146,7 +2219,7 @@ def content_show():
 
     if not paths:
         console.print("[yellow]No content paths configured.[/yellow]")
-        console.print("[dim]Add one with: crier config content add <path>[/dim]")
+        console.print("[dim]Add one with: outpour config content add <path>[/dim]")
         return
 
     console.print("[bold]Content Paths:[/bold]")
@@ -2163,7 +2236,7 @@ def content_show():
 def content_set(paths: tuple[str, ...]):
     """Set content paths (replaces existing).
 
-    Example: crier config content set content/posts content/blog
+    Example: outpour config content set content/posts content/blog
     """
     set_content_paths(list(paths))
     console.print(f"[green]Content paths set to: {', '.join(paths)}[/green]")
@@ -2731,7 +2804,7 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
             content_paths = get_content_paths()
             if not content_paths:
                 console.print("[yellow]No content paths configured.[/yellow]")
-                console.print("[dim]Add one with: crier config content add <path>[/dim]")
+                console.print("[dim]Add one with: outpour config content add <path>[/dim]")
             else:
                 paths_str = ', '.join(content_paths)
                 console.print(

@@ -55,6 +55,89 @@ def parse_front_matter(content: str) -> tuple[dict[str, Any], str]:
     return {}, content.strip()
 
 
+def derive_bootstrap_title(content: str, fallback: str) -> str:
+    """Title for a front-matter bootstrap: first ATX heading, else filename.
+
+    The heading is cleaned of its markers and of a wrapping link, so
+    "# [Hello](https://example.com)" yields "Hello". The fallback
+    turns a stem like "ai-lead-follow-up" into "Ai Lead Follow Up".
+    """
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        heading = stripped.lstrip("#").strip()
+        if not heading:
+            continue
+        link = re.match(r"^\[(?P<text>[^\]]+)\]\([^)]*\)$", heading)
+        if link:
+            heading = link.group("text")
+        return heading.strip("*_` \t")
+    return " ".join(
+        word.capitalize()
+        for word in fallback.replace("_", " ").replace("-", " ").split()
+    )
+
+
+def bootstrap_front_matter(
+    content: str, fallback_title: str
+) -> tuple[str, bool, str]:
+    """Add a title-only front-matter block to markdown that lacks one.
+
+    Returns (new_content, changed, detail): detail is the title when
+    changed, else the skip reason. Body text is never altered: a file
+    without front matter gains a prepended block, and a file whose
+    front matter lacks a title gains one title line. A file that
+    already has a title, or whose front matter does not parse as a
+    mapping, is returned unchanged.
+    """
+    title = derive_bootstrap_title(content, fallback_title)
+
+    yaml_match = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)$", content, re.DOTALL)
+    if yaml_match:
+        fm_str, body = yaml_match.group(1), yaml_match.group(2)
+        try:
+            fm = yaml.safe_load(fm_str) or {}
+        except yaml.YAMLError:
+            return content, False, "unparseable front matter"
+        if not isinstance(fm, dict):
+            return content, False, "unparseable front matter"
+        if fm.get("title"):
+            return content, False, "already has a title"
+        title_line = yaml.safe_dump(
+            {"title": title}, allow_unicode=True
+        ).strip()
+        block = (
+            fm_str.rstrip("\n") + "\n" + title_line
+            if fm_str.strip()
+            else title_line
+        )
+        return f"---\n{block}\n---\n{body}", True, title
+
+    toml_match = re.match(r"^\+\+\+\s*\n(.*?)\n\+\+\+\s*\n(.*)$", content, re.DOTALL)
+    if toml_match:
+        fm_str, body = toml_match.group(1), toml_match.group(2)
+        try:
+            fm = _parse_toml(fm_str)
+        except Exception:
+            return content, False, "unparseable front matter"
+        if not isinstance(fm, dict):
+            return content, False, "unparseable front matter"
+        if fm.get("title"):
+            return content, False, "already has a title"
+        import json
+
+        block = (
+            fm_str.rstrip("\n") + "\n" + f"title = {json.dumps(title)}"
+            if fm_str.strip()
+            else f"title = {json.dumps(title)}"
+        )
+        return f"+++\n{block}\n+++\n{body}", True, title
+
+    title_line = yaml.safe_dump({"title": title}, allow_unicode=True).strip()
+    return f"---\n{title_line}\n---\n\n{content}", True, title
+
+
 def _parse_toml(toml_str: str) -> dict[str, Any]:
     """Parse TOML consistently on every supported Python version."""
     try:

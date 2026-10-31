@@ -99,6 +99,12 @@ You should see a Dry Run Preview with "✓ Ready" for each configured platform b
 .venv/bin/outpour schedule run        # run this from cron, or use the Actions setup below
 ```
 
+Already have drafts with no front matter? Give them a title block first (taken from each file's first heading, or its filename). Body text is never touched:
+
+```bash
+.venv/bin/outpour bootstrap drafts/   # add --dry-run to preview only
+```
+
 Prefer clicking? The web UI runs locally:
 
 ```bash

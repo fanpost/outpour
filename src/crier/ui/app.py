@@ -219,7 +219,7 @@ def create_app(service: Any = None) -> FastAPI:
             + "</table>"
             if rows
             else "<p class='dim'>No articles found. Set content paths with "
-            "<code>outpour content add &lt;dir&gt;</code>, then write one from New article.</p>"
+            "<code>outpour config content add &lt;dir&gt;</code>, then write one from New article.</p>"
         )
         return _page("Articles", body)
 

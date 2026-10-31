@@ -155,6 +155,18 @@ def test_articles_page_lists_titles_and_ledger_status(client):
     assert "manual mode" in response.text
 
 
+def test_articles_empty_state_names_a_real_command():
+    class EmptyService(FakeService):
+        def list_articles(self):
+            return []
+
+    response = TestClient(create_app(service=EmptyService())).get("/articles")
+    assert response.status_code == 200
+    assert "No articles found" in response.text
+    assert "outpour config content add" in response.text
+    assert "outpour content add" not in response.text
+
+
 def test_editor_page_has_fields_platform_checkboxes_and_draft_toggle(client):
     response = client.get("/editor", params={"path": "/content/first.md"})
     assert response.status_code == 200

@@ -1,6 +1,25 @@
 // Outpour web UI: small progressive enhancements only. Every action
 // also works with JavaScript disabled, because the forms post normally.
 document.addEventListener("DOMContentLoaded", function () {
+  // Dark mode: the head script has already applied the saved theme
+  // (localStorage "outpour-theme") to <html data-theme> before first
+  // paint; this wires the toggle button and keeps its label honest.
+  var toggle = document.getElementById("theme-toggle");
+  if (toggle) {
+    var syncLabel = function () {
+      toggle.textContent =
+        document.documentElement.dataset.theme === "dark" ? "Light mode" : "Dark mode";
+    };
+    syncLabel();
+    toggle.addEventListener("click", function () {
+      var next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      try {
+        localStorage.setItem("outpour-theme", next);
+      } catch (e) {}
+      syncLabel();
+    });
+  }
   document.querySelectorAll("form[data-confirm]").forEach(function (form) {
     form.addEventListener("submit", function (event) {
       if (!window.confirm(form.getAttribute("data-confirm"))) {

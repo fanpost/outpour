@@ -20,15 +20,19 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from .service import UIService
 
 CSS = """
-body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#111}
+:root{--bg:#fdfdfa;--fg:#1a1a1a;--muted:#5c5c58;--border:#c9c9c2;--field:#fff;--ok:#067647;--bad:#b42318;--link:#0b5cab;--primary:#0b5cab;--hosted:#4c4c48}
+:root[data-theme=dark]{--bg:#14161a;--fg:#e9e6df;--muted:#a3a099;--border:#3c4149;--field:#1d2026;--ok:#4cc38a;--bad:#ff8a7a;--link:#8ab4f8;--primary:#2f7fd0;--hosted:#b6b0a4;color-scheme:dark}
+body{font-family:'Courier Prime','Courier New',Courier,monospace;letter-spacing:.01em;background:var(--bg);max-width:900px;margin:2rem auto;padding:0 1rem;color:var(--fg)}
+a{color:var(--link)}
 nav a{margin-right:1rem} table{border-collapse:collapse;width:100%}
-th,td{border:1px solid #ccc;padding:.4rem;text-align:left;vertical-align:top}
-.ok{color:#067647}.bad{color:#b42318}.dim{color:#666}
-label{display:block;margin:.6rem 0 .2rem} input[type=text],textarea{width:100%;padding:.4rem}
-textarea{height:22rem;font-family:monospace} button{padding:.4rem 1rem;margin-top:.8rem}
-fieldset{margin:1rem 0} .card{border:1px solid #ccc;padding:1rem;margin:1rem 0}
-button.primary{background:#0b5cab;color:#fff;border:1px solid #0b5cab}
-.hosted{color:#444;font-size:.95rem}
+th,td{border:1px solid var(--border);padding:.4rem;text-align:left;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--muted)}
+label{display:block;margin:.6rem 0 .2rem} input[type=text],textarea{width:100%;padding:.4rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit}
+textarea{height:22rem} button{padding:.4rem 1rem;margin-top:.8rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit;cursor:pointer}
+fieldset{margin:1rem 0;border:1px solid var(--border)} .card{border:1px solid var(--border);padding:1rem;margin:1rem 0}
+button.primary{background:var(--primary);color:#fff;border:1px solid var(--primary)}
+.hosted{color:var(--hosted);font-size:.95rem}
+.theme-toggle{float:right;margin-top:.4rem}
 """
 
 WAITLIST_URL = (
@@ -55,8 +59,11 @@ def _page(title: str, body: str) -> str:
     )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
+        "<script>try{var t=localStorage.getItem('outpour-theme');"
+        "if(t){document.documentElement.dataset.theme=t}}catch(e){}</script>"
         f"<title>{_esc(title)} - Outpour</title><style>{CSS}</style>"
         f"<script src='/static/app.js' defer></script></head><body>"
+        "<button type='button' id='theme-toggle' class='theme-toggle'>Dark mode</button>"
         f"<h1>Outpour</h1>{nav}<h2>{_esc(title)}</h2>{body}{HOSTED_STRIP}</body></html>"
     )
 

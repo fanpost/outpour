@@ -245,6 +245,16 @@ def test_pages_carry_hosted_waitlist_strip(client):
         assert "docs.google.com/forms" in response.text
 
 
+def test_pages_have_dark_mode_toggle_and_theme_script(client):
+    response = client.get("/articles")
+    assert response.status_code == 200
+    assert "id='theme-toggle'" in response.text
+    assert "outpour-theme" in response.text
+    js = client.get("/static/app.js")
+    assert "outpour-theme" in js.text
+    assert "Courier" in response.text  # typewriter font stack ships in the CSS
+
+
 def test_publish_and_schedule_forms_carry_progress_state(client):
     response = client.get("/editor", params={"path": "/content/first.md"})
     assert response.status_code == 200

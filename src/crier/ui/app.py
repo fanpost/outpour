@@ -33,6 +33,10 @@ fieldset{margin:1rem 0;border:1px solid var(--border)} .card{border:1px solid va
 button.primary{background:var(--primary);color:#fff;border:1px solid var(--primary)}
 .hosted{color:var(--hosted);font-size:.95rem}
 .theme-toggle{float:right;margin-top:.4rem}
+.statusline{display:flex;gap:1rem;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:.3rem 0;margin-top:.5rem}
+nav,h1,h2,.card,.hosted,.theme-toggle{transition:opacity .25s}
+body.focus nav,body.focus h1,body.focus h2,body.focus .card,body.focus .hosted,body.focus .theme-toggle{opacity:.15}
+body.focus form[action='/editor'] label,body.focus form[action='/editor'] input{opacity:.3}
 """
 
 WAITLIST_URL = (
@@ -89,6 +93,19 @@ def _platform_checkboxes(service: Any, selected: set[str] | None = None, disable
     return "".join(parts)
 
 
+def _status_text(name: str, body: str) -> str:
+    """The editor status line: file, words, characters, reading time."""
+    words = len(body.split())
+    parts = []
+    if name:
+        parts.append(name)
+    parts.append(f"{words} words")
+    parts.append(f"{len(body)} characters")
+    if words:
+        parts.append(f"{max(1, round(words / 200))} min read")
+    return " · ".join(parts)
+
+
 def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, error: str = "") -> str:
     # An article dict with no path (e.g. rebuilt from a failed save) is
     # treated as new, so its filename field stays visible and its
@@ -120,6 +137,12 @@ def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, erro
         if is_new
         else ""
     )
+    body_text = (article.get("body") or "") if article else ""
+    name = (article.get("name") or article.get("filename") or "") if article else ""
+    status_line = (
+        f"<div class='statusline' id='editor-status' data-name='{_esc(name)}'>"
+        f"{_esc(_status_text(name, body_text))}</div>"
+    )
     return (
         f"{notice}{import_card}<form method='post' action='/editor'>"
         f"<input type='hidden' name='path' value='{_esc(path)}'>"
@@ -136,7 +159,9 @@ def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, erro
         f"<input type='text' name='cover_image' value='{_esc(article['cover_image']) if article else ''}'>"
         "<label>Body (markdown)</label>"
         f"<textarea name='body'>{_esc(article['body']) if article else ''}</textarea>"
-        "<button type='submit' class='primary'>Save article</button></form>"
+        f"{status_line}"
+        "<button type='submit' class='primary'>Save article</button> "
+        "<button type='button' id='focus-toggle'>Focus mode</button></form>"
         + _action_forms(service, path, enabled=not is_new)
     )
 

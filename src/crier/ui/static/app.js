@@ -20,6 +20,40 @@ document.addEventListener("DOMContentLoaded", function () {
       syncLabel();
     });
   }
+  // Editor status line: filename, live word count, characters, and
+  // reading time, in the vim-status-line spirit. The server renders
+  // the initial values; this keeps them honest while typing.
+  var area = document.querySelector("textarea[name='body']");
+  var status = document.getElementById("editor-status");
+  if (area && status) {
+    var fileName = status.getAttribute("data-name") || "";
+    var renderStatus = function () {
+      var trimmed = area.value.trim();
+      var words = trimmed ? trimmed.split(/\s+/).length : 0;
+      var parts = [];
+      if (fileName) {
+        parts.push(fileName);
+      }
+      parts.push(words + " words");
+      parts.push(area.value.length + " characters");
+      if (words) {
+        parts.push(Math.max(1, Math.round(words / 200)) + " min read");
+      }
+      status.textContent = parts.join(" · ");
+    };
+    area.addEventListener("input", renderStatus);
+    renderStatus();
+  }
+  // Focus mode: dim everything around the editor while writing. The
+  // toggle itself and the Save button stay bright so the way out and
+  // the way to save are never hidden.
+  var focusToggle = document.getElementById("focus-toggle");
+  if (focusToggle) {
+    focusToggle.addEventListener("click", function () {
+      var on = document.body.classList.toggle("focus");
+      focusToggle.textContent = on ? "Exit focus" : "Focus mode";
+    });
+  }
   document.querySelectorAll("form[data-confirm]").forEach(function (form) {
     form.addEventListener("submit", function (event) {
       if (!window.confirm(form.getAttribute("data-confirm"))) {

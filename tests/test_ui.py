@@ -309,6 +309,17 @@ def test_import_rejects_non_markdown_and_empty_files(client):
     assert "empty" in empty.text
 
 
+def test_editor_has_status_line_and_focus_toggle(client):
+    response = client.get("/editor", params={"path": "/content/first.md"})
+    assert response.status_code == 200
+    assert "id='editor-status'" in response.text
+    assert "4 words" in response.text  # the fake article body is 4 words
+    assert "id='focus-toggle'" in response.text
+    js = client.get("/static/app.js")
+    assert "editor-status" in js.text
+    assert "focus-toggle" in js.text
+
+
 def test_service_import_markdown_keeps_content_and_renames_on_collision(tmp_path, monkeypatch):
     content = tmp_path / "content"
     content.mkdir()

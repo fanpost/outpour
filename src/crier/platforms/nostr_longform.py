@@ -41,7 +41,7 @@ from urllib.parse import urlparse
 from slugify import slugify
 
 from .base import Article, DeleteResult, Platform, PublishResult
-from .nostr import DEFAULT_RELAYS
+from .nostr import DEFAULT_RELAYS, broadcast_event
 
 _IMPORT_HINT = "Nostr requires the 'nostr' extra: pip install 'outpour[nostr]'"
 
@@ -125,23 +125,14 @@ class NostrLongform(Platform):
         event.sign(priv.hex())
         return event
 
-    def _publish_event(self, event) -> None:
-        """Broadcast a signed event to all configured relays."""
-        try:
-            from pynostr.relay_manager import RelayManager
-        except ImportError as e:  # pragma: no cover
-            raise ImportError(_IMPORT_HINT) from e
-        rm = RelayManager(timeout=self.timeout)
-        for url in self.relays:
-            rm.add_relay(url)
-        try:
-            rm.publish_event(event)
-            rm.run_sync()
-        finally:
-            try:
-                rm.close_all_relay_connections()
-            except Exception:
-                pass
+    def _publish_event(self, event) -> dict[str, str]:
+        """Broadcast a signed event, returning per-relay OK outcomes.
+
+        Shared helper from the kind-1 platform; see broadcast_event
+        for the outcome vocabulary. "no acknowledgement" is treated
+        as failure by publish(), never as success.
+        """
+        return broadcast_event(self.relays, event)
 
     # --- Platform interface ----------------------------------------------
 
@@ -150,9 +141,22 @@ class NostrLongform(Platform):
             event = self._signed_event(
                 article.body, kind=30023, tags=build_tags(article)
             )
-            self._publish_event(event)
+            results = self._publish_event(event)
         except Exception as e:
             return PublishResult(success=False, platform=self.name, error=str(e))
+        accepted = [u for u, o in results.items() if o == "accepted"]
+        if not accepted:
+            detail = "; ".join(f"{u}: {o}" for u, o in results.items())
+            return PublishResult(
+                success=False,
+                platform=self.name,
+                error=(
+                    f"No relay acknowledged event {event.id} ({detail}). "
+                    "The event may still have been stored by a relay that "
+                    "stayed silent; re-publishing is safe, the same d-tag "
+                    "replaces the previous version instead of duplicating."
+                ),
+            )
         return PublishResult(
             success=True,
             platform=self.name,

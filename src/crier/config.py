@@ -304,7 +304,7 @@ def get_exclude_patterns() -> list[str]:
     """Get patterns to exclude from content discovery.
 
     Returns list of filename patterns to exclude.
-    No default fallback - must be explicitly configured via `crier init`
+    No default fallback - must be explicitly configured via `outpour init`
     or manually in config.
 
     Configure in ~/.config/crier/config.yaml:
@@ -408,7 +408,7 @@ def get_file_extensions() -> list[str]:
     """Get file extensions to scan for content.
 
     Returns list of extensions (with leading dot).
-    Must be explicitly configured via `crier init` or manually.
+    Must be explicitly configured via `outpour init` or manually.
 
     Configure in ~/.config/crier/config.yaml:
         file_extensions:

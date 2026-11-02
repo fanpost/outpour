@@ -103,9 +103,12 @@ def test_publish_signs_kind_30023_with_full_tags():
 
     captured = {}
     n = NostrLongform(PrivateKey().hex())
-    with patch.object(
-        NostrLongform, "_publish_event", lambda self, e: captured.update(event=e)
-    ):
+
+    def fake_publish(self, e):
+        captured.update(event=e)
+        return {"wss://relay.damus.io": "accepted"}
+
+    with patch.object(NostrLongform, "_publish_event", fake_publish):
         res = n.publish(_article())
     assert res.success is True
     ev = captured["event"]
@@ -127,9 +130,12 @@ def test_update_republishes_same_d_tag():
 
     seen = []
     n = NostrLongform(PrivateKey().hex())
-    with patch.object(
-        NostrLongform, "_publish_event", lambda self, e: seen.append(e)
-    ):
+
+    def fake_publish(self, e):
+        seen.append(e)
+        return {"wss://relay.damus.io": "accepted"}
+
+    with patch.object(NostrLongform, "_publish_event", fake_publish):
         res = n.update("old-id", _article())
     assert res.success is True
     assert seen[0].kind == 30023

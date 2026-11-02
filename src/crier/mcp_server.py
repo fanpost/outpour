@@ -5,8 +5,8 @@ and analytics as MCP tools. Designed for full CLI parity so Claude Code
 can orchestrate cross-posting workflows entirely via MCP.
 
 Usage:
-    crier mcp            # Start stdio server (for Claude Code)
-    crier mcp --http     # Start HTTP/SSE server (for testing)
+    outpour mcp            # Start stdio server (for Claude Code)
+    outpour mcp --http     # Start HTTP/SSE server (for testing)
 
 Tools (17):
     Registry:

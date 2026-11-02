@@ -44,7 +44,7 @@ User: cross-post my new blog post to the usual platforms
 Claude: I'll cross-post content/post/2026-01-04-my-article/index.md
 
 Let me check what's needed:
-[runs: crier audit content/post/2026-01-04-my-article/index.md]
+[runs: outpour audit content/post/2026-01-04-my-article/index.md]
 
 Platforms to post:
 • devto (API) - will auto-post
@@ -70,7 +70,7 @@ https://yourblog.com/post/2026-01-04-my-article/
 
 Go to: https://medium.com/p/import
 
-[runs: crier publish article.md --to medium --yes]
+[runs: outpour publish article.md --to medium --yes]
 
 Did you import to Medium successfully?
 
@@ -84,7 +84,7 @@ Claude: ✓ All platforms complete.
 ```
 User: post this to bluesky
 
-Claude: [runs: crier publish article.md --to bluesky]
+Claude: [runs: outpour publish article.md --to bluesky]
 
 Error: Content too long for bluesky: 5000 characters (limit: 300)
 
@@ -96,7 +96,7 @@ complex problems."
 
 (198 chars + URL = within limit)
 
-[runs: crier publish article.md --to bluesky \
+[runs: outpour publish article.md --to bluesky \
   --rewrite "New post: Exploring..." --rewrite-author "claude-code"]
 
 ✓ bluesky: https://bsky.app/profile/user/post/abc123
@@ -109,7 +109,7 @@ User: post to medium
 
 Claude: Medium uses URL import. I'll set this up:
 
-[runs: crier publish article.md --to medium --yes]
+[runs: outpour publish article.md --to medium --yes]
 
 Import your article from this URL:
 https://yourblog.com/post/2026-01-04-my-article/
@@ -120,7 +120,7 @@ Did the import work?
 
 User: yes
 
-Claude: ✓ Registered in crier. Done!
+Claude: ✓ Registered in outpour. Done!
 ```
 
 ### Example 4: Manual paste mode (Twitter)
@@ -130,7 +130,7 @@ User: share on twitter
 
 Claude: Twitter uses copy-paste mode.
 
-[runs: crier publish article.md --to twitter --yes]
+[runs: outpour publish article.md --to twitter --yes]
 
 I've copied this to your clipboard:
 "New post: My Article Title - exploring key concepts...
@@ -150,19 +150,19 @@ Claude: ✓ Registered. All done!
 
 ### User wants to cross-post
 
-1. **Audit first**: `crier audit <file>` or `crier audit` for all content
+1. **Audit first**: `outpour audit <file>` or `outpour audit` for all content
 2. **Show platforms**: List what will happen for each platform
 3. **Get confirmation**: Simple "Proceed?" - trust the user
 4. **Execute by type**:
-   - API long-form → `crier publish <file> --to <platform>`
+   - API long-form → `outpour publish <file> --to <platform>`
    - API short-form → Generate summary, use `--rewrite`
-   - Import mode → `crier publish ... --to medium --yes`, tell user to import
-   - Paste mode → `crier publish ... --to twitter --yes`, tell user to paste
+   - Import mode → `outpour publish ... --to medium --yes`, tell user to import
+   - Paste mode → `outpour publish ... --to twitter --yes`, tell user to paste
 5. **Report results**: Show all successes, ask about manual platforms
 
 ### User says something changed
 
-1. Run `crier audit` to see `⚠` dirty markers
+1. Run `outpour audit` to see `⚠` dirty markers
 2. For platforms that support update: re-run publish (auto-updates)
 3. For platforms without update (bluesky, twitter): tell user they must delete/repost manually
 
@@ -174,19 +174,19 @@ Claude: ✓ Registered. All done!
 
 ## Interpreting Audit Scope
 
-The `crier audit` command scans all directories in `content_paths` by default. Users often want to scope to specific content types.
+The `outpour audit` command scans all directories in `content_paths` by default. Users often want to scope to specific content types.
 
 **Reading user intent:**
 
 | User says... | Likely scope |
 |--------------|--------------|
-| "last month of content", "recent content", "what needs posting" | All content (`crier audit --since 1m`) |
-| "blog posts", "posts", "articles" | `crier audit content/post` |
-| "projects" | `crier audit content/projects` |
-| "papers", "research" | `crier audit content/papers` |
+| "last month of content", "recent content", "what needs posting" | All content (`outpour audit --since 1m`) |
+| "blog posts", "posts", "articles" | `outpour audit content/post` |
+| "projects" | `outpour audit content/projects` |
+| "papers", "research" | `outpour audit content/papers` |
 
 **When uncertain:**
-- Run `crier config show` to see configured content paths (crier finds its config automatically, like git)
+- Run `outpour config show` to see configured content paths (outpour finds its config automatically, like git)
 - Look at what subdirectories exist under the content paths
 - Make a reasonable choice based on available clues
 - If wrong, the user will clarify - that's what conversation is for
@@ -197,30 +197,30 @@ The `crier audit` command scans all directories in `content_paths` by default. U
 
 ```bash
 # Check what needs publishing
-crier audit
-crier audit content/post/my-article/index.md
+outpour audit
+outpour audit content/post/my-article/index.md
 
 # Publish to API platform
-crier publish article.md --to devto
+outpour publish article.md --to devto
 
 # Publish with rewrite for short-form
-crier publish article.md --to bluesky \
+outpour publish article.md --to bluesky \
   --rewrite "Short announcement text" \
   --rewrite-author "claude-code"
 
 # Auto-rewrite using configured LLM (requires LLM config)
-crier publish article.md --to bluesky --auto-rewrite
+outpour publish article.md --to bluesky --auto-rewrite
 
 # Import/paste mode (skips interactive prompts)
-crier publish article.md --to medium --yes
-crier publish article.md --to twitter --yes
+outpour publish article.md --to medium --yes
+outpour publish article.md --to twitter --yes
 
 # Check API keys
-crier doctor
+outpour doctor
 
 # Manual registry management
-crier register <file> --platform <platform> [--url <url>]
-crier unregister <file> --platform <platform>
+outpour register <file> --platform <platform> [--url <url>]
+outpour unregister <file> --platform <platform>
 ```
 
 ## Automation Modes
@@ -231,8 +231,8 @@ Use `--batch` for fully automated, non-interactive publishing:
 
 ```bash
 # Batch mode: implies --yes --json, skips manual/import platforms
-crier publish article.md --to devto --to bluesky --batch
-crier audit --publish --batch
+outpour publish article.md --to devto --to bluesky --batch
+outpour audit --publish --batch
 ```
 
 Batch mode:
@@ -247,10 +247,10 @@ Use `--json` for machine-readable output:
 
 ```bash
 # JSON output for publish
-crier publish article.md --to devto --json
+outpour publish article.md --to devto --json
 
 # JSON output for audit
-crier audit --json
+outpour audit --json
 ```
 
 JSON output structure:
@@ -271,22 +271,22 @@ Use `--auto-rewrite` to automatically generate short-form content:
 
 ```bash
 # Basic auto-rewrite
-crier publish article.md --to bluesky --auto-rewrite
+outpour publish article.md --to bluesky --auto-rewrite
 
 # Preview with dry-run (shows char budget like "285/300 chars, 95%")
-crier publish article.md --to bluesky --auto-rewrite --dry-run
+outpour publish article.md --to bluesky --auto-rewrite --dry-run
 
 # Retry up to 3 times if output exceeds character limit
-crier publish article.md --to bluesky --auto-rewrite -R 3
+outpour publish article.md --to bluesky --auto-rewrite -R 3
 
 # Truncate at sentence boundary if retries fail
-crier publish article.md --to bluesky --auto-rewrite -R 3 --auto-rewrite-truncate
+outpour publish article.md --to bluesky --auto-rewrite -R 3 --auto-rewrite-truncate
 
 # Override temperature (0.0-2.0, higher=more creative)
-crier publish article.md --to bluesky --auto-rewrite --temperature 1.2
+outpour publish article.md --to bluesky --auto-rewrite --temperature 1.2
 
 # Override model
-crier publish article.md --to bluesky --auto-rewrite --model gpt-4o
+outpour publish article.md --to bluesky --auto-rewrite --model gpt-4o
 ```
 
 **Simplest setup:** If `OPENAI_API_KEY` is set, it just works (defaults to gpt-4o-mini).
@@ -309,31 +309,31 @@ For large content libraries, use filters to control scope:
 
 ```bash
 # Batch mode: publish to API long-form platforms (fully automated)
-crier audit --publish --batch --long-form
+outpour audit --publish --batch --long-form
 
 # Post 5 random articles to blog platforms
-crier audit --publish --yes --only-api --long-form --sample 5
+outpour audit --publish --yes --only-api --long-form --sample 5
 
 # All missing to API platforms (skips manual/import)
-crier audit --publish --yes --only-api
+outpour audit --publish --yes --only-api
 
 # Include updates to changed content
-crier audit --publish --yes --include-changed
+outpour audit --publish --yes --include-changed
 
 # Filter by path - only posts (not projects, papers, etc.)
-crier audit content/post --publish --yes --only-api --long-form --sample 5
+outpour audit content/post --publish --yes --only-api --long-form --sample 5
 
 # Only projects
-crier audit content/projects --only-api
+outpour audit content/projects --only-api
 
 # Posts from last week
-crier audit --since 1w --publish --yes --only-api
+outpour audit --since 1w --publish --yes --only-api
 
 # Posts from December 2025
-crier audit --since 2025-12-01 --until 2025-12-31 --publish --yes
+outpour audit --since 2025-12-01 --until 2025-12-31 --publish --yes
 
 # Sample 5 recent posts (last month)
-crier audit --sample 5 --since 1m --only-api --long-form
+outpour audit --sample 5 --since 1m --only-api --long-form
 ```
 
 ### Filters
@@ -349,8 +349,8 @@ crier audit --sample 5 --since 1m --only-api --long-form
 
 ### Claude Code Bulk Workflow
 
-1. Run automated batch: `crier audit --publish --batch --long-form --sample 10`
-2. Check what else needs work: `crier audit`
+1. Run automated batch: `outpour audit --publish --batch --long-form --sample 10`
+2. Check what else needs work: `outpour audit`
 3. Handle short-form platforms with --rewrite or --auto-rewrite
 4. Guide user through manual/import platforms
 
@@ -377,16 +377,16 @@ API keys and profiles (shared across all projects):
 
 ```bash
 # Set API key for automatic posting
-crier config set devto.api_key <key>
+outpour config set devto.api_key <key>
 
 # Set import mode (Medium)
-crier config set medium.api_key import
+outpour config set medium.api_key import
 
 # Set paste mode (Twitter)
-crier config set twitter.api_key manual
+outpour config set twitter.api_key manual
 
 # Check configuration
-crier doctor
+outpour doctor
 ```
 
 LLM configuration (for --auto-rewrite):
@@ -413,9 +413,9 @@ llm:
 
 Set LLM config via CLI:
 ```bash
-crier config llm set temperature 0.9
-crier config llm set retry_count 3
-crier config llm set truncate_fallback true
+outpour config llm set temperature 0.9
+outpour config llm set retry_count 3
+outpour config llm set truncate_fallback true
 ```
 
 ### Local Config (.crier/config.yaml)

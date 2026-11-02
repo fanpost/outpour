@@ -44,7 +44,7 @@ def generate_feed(
     if not site_url:
         raise ValueError(
             "site_base_url required for feed generation. "
-            "Set it with: crier config set site_base_url https://example.com"
+            "Set it with: outpour config set site_base_url https://example.com"
         )
 
     # Parse and filter files

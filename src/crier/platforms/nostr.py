@@ -30,13 +30,59 @@ DEFAULT_RELAYS = [
     "wss://relay.primal.net",
 ]
 
-_IMPORT_HINT = "Nostr requires the 'nostr' extra: pip install 'crier[nostr]'"
+_IMPORT_HINT = "Nostr requires the 'nostr' extra: pip install 'outpour[nostr]'"
+
+
+def broadcast_event(relays: list[str], event) -> dict[str, str]:
+    """Broadcast a signed event and collect per-relay NIP-01 OK acks.
+
+    Returns ``{relay_url: outcome}`` where outcome is ``"accepted"``,
+    ``"rejected: <relay message>"``, or ``"no acknowledgement"`` (the
+    relay never answered within its connect window). Callers must
+    treat "no acknowledgement" as unproven, never as success: earlier
+    versions of this helper reported success fire-and-forget, which
+    claimed publishes that no relay had confirmed.
+
+    Raises ImportError with the install hint when the [nostr] extra
+    is missing. Each relay gets pynostr's default ~2s connect window,
+    so a full broadcast to the default set takes at most ~8s.
+    """
+    try:
+        from pynostr.relay_manager import RelayManager
+    except ImportError as e:  # pragma: no cover
+        raise ImportError(_IMPORT_HINT) from e
+    rm = RelayManager()
+    for url in relays:
+        rm.add_relay(url)
+    try:
+        rm.publish_event(event)
+        rm.run_sync()
+        acks = {}
+        for ok in rm.message_pool.get_all_ok():
+            if ok.event_id == event.id:
+                acks[ok.url] = ok
+        results = {}
+        for url in relays:
+            if url in acks:
+                ok = acks[url]
+                if ok.ok is True or ok.ok == "true":
+                    results[url] = "accepted"
+                else:
+                    results[url] = f"rejected: {ok.message}"
+            else:
+                results[url] = "no acknowledgement"
+        return results
+    finally:
+        try:
+            rm.close_all_relay_connections()
+        except Exception:
+            pass
 
 
 class Nostr(Platform):
     """Publish short notes to the Nostr network.
 
-    Configure with a private key: ``crier config set platforms.nostr.api_key
+    Configure with a private key: ``outpour config set platforms.nostr.api_key
     nsec1...`` (optionally ``nsec1...|wss://relay.a,wss://relay.b`` for custom
     relays). Short-form by convention (microblogging), though Nostr imposes no
     length limit.
@@ -98,23 +144,14 @@ class Nostr(Platform):
         event.sign(priv.hex())
         return event
 
-    def _publish_event(self, event) -> None:
-        """Broadcast a signed event to all configured relays."""
-        try:
-            from pynostr.relay_manager import RelayManager
-        except ImportError as e:  # pragma: no cover
-            raise ImportError(_IMPORT_HINT) from e
-        rm = RelayManager(timeout=self.timeout)
-        for url in self.relays:
-            rm.add_relay(url)
-        try:
-            rm.publish_event(event)
-            rm.run_sync()
-        finally:
-            try:
-                rm.close_all_relay_connections()
-            except Exception:
-                pass
+    def _publish_event(self, event) -> dict[str, str]:
+        """Broadcast a signed event, returning per-relay OK outcomes.
+
+        See broadcast_event for the outcome vocabulary. A relay that
+        never answers reports "no acknowledgement", which publish()
+        treats as failure, not success.
+        """
+        return broadcast_event(self.relays, event)
 
     # --- Platform interface ---------------------------------------------
 
@@ -124,9 +161,22 @@ class Nostr(Platform):
             return PublishResult(success=False, platform=self.name, error=error)
         try:
             event = self._signed_event(text, kind=1)
-            self._publish_event(event)
+            results = self._publish_event(event)
         except Exception as e:
             return PublishResult(success=False, platform=self.name, error=str(e))
+        accepted = [u for u, o in results.items() if o == "accepted"]
+        if not accepted:
+            detail = "; ".join(f"{u}: {o}" for u, o in results.items())
+            return PublishResult(
+                success=False,
+                platform=self.name,
+                error=(
+                    f"No relay acknowledged event {event.id} ({detail}). "
+                    "The event may still have been stored by a relay that "
+                    "stayed silent; check njump before re-posting, since "
+                    "kind-1 notes are immutable and a re-post duplicates."
+                ),
+            )
         return PublishResult(
             success=True,
             platform=self.name,

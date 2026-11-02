@@ -144,7 +144,7 @@ def cli():
 
 @cli.command()
 def init():
-    """Initialize crier for your project.
+    """Initialize outpour for your project.
 
     Sets up the registry, detects content directories, and helps
     configure platforms for cross-posting.
@@ -401,14 +401,14 @@ def init():
     # Step 5: Summary and next steps
     console.print("[bold]Setup Complete![/bold]\n")
     console.print("Next steps:")
-    console.print("  1. Run [cyan]crier audit[/cyan] to see what can be published")
-    console.print("  2. Run [cyan]crier publish <file> --to <platform>[/cyan] to publish content")
-    console.print("  3. Run [cyan]crier doctor[/cyan] to verify your API keys work")
+    console.print("  1. Run [cyan]outpour audit[/cyan] to see what can be published")
+    console.print("  2. Run [cyan]outpour publish <file> --to <platform>[/cyan] to publish content")
+    console.print("  3. Run [cyan]outpour doctor[/cyan] to verify your API keys work")
     console.print()
 
     # Mention Claude Code integration
     console.print("[dim]Using Claude Code? Install the crier skill with:[/dim]")
-    console.print("[dim]  crier skill install[/dim]")
+    console.print("[dim]  outpour skill install[/dim]")
     console.print("[dim]Then just ask Claude to cross-post your content![/dim]")
     console.print()
 
@@ -584,13 +584,13 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 console.print("[red]Error: LLM not configured for --auto-rewrite[/red]")
                 console.print()
                 console.print("[bold]Fix:[/bold] export OPENAI_API_KEY=sk-...")
-                console.print("[bold]Or:[/bold]  crier config llm set api_key sk-...")
+                console.print("[bold]Or:[/bold]  outpour config llm set api_key sk-...")
                 console.print()
                 console.print(
-                    "[dim]For Ollama: crier config llm set"
+                    "[dim]For Ollama: outpour config llm set"
                     " base_url http://localhost:11434/v1[/dim]"
                 )
-                console.print("[dim]            crier config llm set model llama3[/dim]")
+                console.print("[dim]            outpour config llm set model llama3[/dim]")
             raise SystemExit(1)
 
         # Resolve auto-rewrite settings from config if not specified on CLI
@@ -632,7 +632,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 console.print(f"[red]Unknown profile: {profile_name}[/red]")
                 console.print(
                     "[dim]Create a profile with:"
-                    " crier config profile set <name> <platforms>[/dim]"
+                    " outpour config profile set <name> <platforms>[/dim]"
                 )
             raise SystemExit(1)
         platforms.extend(profile_platforms)
@@ -673,7 +673,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
             console.print("[bold]Or specify directly:[/bold]")
             console.print("  --to devto --to bluesky")
             console.print()
-            console.print("[dim]Set a default: crier config set default_profile <name>[/dim]")
+            console.print("[dim]Set a default: outpour config set default_profile <name>[/dim]")
         raise SystemExit(1)
 
     # Preserve whether attribution was explicitly supplied before resolving UI defaults.
@@ -823,9 +823,9 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
             for post in scheduled_posts:
                 console.print(f"  • {post.platform}: {post.id}")
             console.print()
-            console.print("[dim]Run 'crier schedule list' to view scheduled posts.[/dim]")
+            console.print("[dim]Run 'outpour schedule list' to view scheduled posts.[/dim]")
             console.print(
-                "[dim]Run 'crier schedule run' to process"
+                "[dim]Run 'outpour schedule run' to process"
                 " due posts (add to crontab).[/dim]"
             )
         return
@@ -881,7 +881,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
         console.print("[dim]  canonical_url: https://yoursite.com/path/to/article/[/dim]")
         console.print()
         console.print("[dim]Or set site_base_url for auto-inference:[/dim]")
-        console.print("[dim]  crier config set site_base_url https://yoursite.com[/dim]")
+        console.print("[dim]  outpour config set site_base_url https://yoursite.com[/dim]")
         console.print()
 
     # Warn if file is outside content_paths
@@ -895,7 +895,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
             )
             console.print(
                 "[dim]It will be tracked in the registry,"
-                " but `crier audit` won't find it.[/dim]"
+                " but `outpour audit` won't find it.[/dim]"
             )
             console.print(
                 "[dim]To include it in audits, run:"
@@ -935,7 +935,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
             api_key = get_api_key(platform_name)
             if not api_key:
                 # Get API key URL if available
-                notes = f"crier config set {platform_name}.api_key YOUR_KEY"
+                notes = f"outpour config set {platform_name}.api_key YOUR_KEY"
                 if platform_name in PLATFORMS:
                     platform_cls = PLATFORMS[platform_name]
                     api_url = getattr(platform_cls, 'api_key_url', None)
@@ -1397,7 +1397,7 @@ def list_articles(
     # --remote requires a specific platform
     if remote and not platform:
         console.print("[red]Error: --remote requires a PLATFORM argument[/red]")
-        console.print("[dim]Example: crier list devto --remote[/dim]")
+        console.print("[dim]Example: outpour list devto --remote[/dim]")
         raise SystemExit(1)
 
     if remote:
@@ -1459,7 +1459,7 @@ def list_articles(
             console.print("No articles in registry.")
             console.print(
                 "[dim]Publish something first with:"
-                " crier publish <file> --to <platform>[/dim]"
+                " outpour publish <file> --to <platform>[/dim]"
             )
             return
 
@@ -1720,8 +1720,8 @@ def doctor(json_output: bool):
         console.print("\n[green]All configured platforms are ready![/green]")
     else:
         console.print("\n[dim]No platforms configured yet.[/dim]")
-        console.print("[dim]Run: crier config set <platform>.api_key YOUR_KEY[/dim]")
-        console.print("[dim]Or for manual mode: crier config set <platform>.api_key manual[/dim]")
+        console.print("[dim]Run: outpour config set <platform>.api_key YOUR_KEY[/dim]")
+        console.print("[dim]Or for manual mode: outpour config set <platform>.api_key manual[/dim]")
 
 
 @cli.command()
@@ -1855,7 +1855,7 @@ def show_platforms():
 
     # Setup hint
     console.print()
-    console.print("[dim]Setup: crier config set <platform>.api_key YOUR_KEY[/dim]")
+    console.print("[dim]Setup: outpour config set <platform>.api_key YOUR_KEY[/dim]")
 
     # Show API key URLs for unconfigured platforms
     unconfigured = [name for name in PLATFORMS if not get_api_key(name)]
@@ -1873,7 +1873,7 @@ def show_platforms():
 
 @cli.group()
 def config():
-    """Manage crier configuration."""
+    """Manage outpour configuration."""
     pass
 
 
@@ -1899,8 +1899,8 @@ def config_set(key: str, value: str):
         console.print(f"[green]Set API key for {platform}[/green]")
     else:
         console.print(f"[red]Unknown config key: {key}[/red]")
-        console.print("Use: crier config set <platform>.api_key <value>")
-        console.print("     crier config set site_base_url <url>")
+        console.print("Use: outpour config set <platform>.api_key <value>")
+        console.print("     outpour config set site_base_url <url>")
 
 
 @config.command(name="get")
@@ -1910,9 +1910,9 @@ def config_get(key: str, json_output: bool):
     """Get a configuration value by key path.
 
     Supports dot notation for nested keys:
-        crier config get llm.model
-        crier config get platforms.devto.api_key
-        crier config get site_base_url
+        outpour config get llm.model
+        outpour config get platforms.devto.api_key
+        outpour config get site_base_url
     """
     import json as json_module
 
@@ -1997,7 +1997,7 @@ def config_show():
     else:
         console.print("[bold]Site Base URL[/bold] [dim](for canonical URL inference)[/dim]")
         console.print("  [dim]Not configured - canonical_url required in front matter[/dim]")
-        console.print("  [dim]Set with: crier config set site_base_url https://yoursite.com[/dim]")
+        console.print("  [dim]Set with: outpour config set site_base_url https://yoursite.com[/dim]")
         console.print()
 
     # Show exclude patterns
@@ -2014,7 +2014,7 @@ def config_show():
         console.print("[bold]Exclude Patterns[/bold] [dim](not configured)[/dim]")
         console.print(
             "  [dim]None - all .md files included."
-            " Run 'crier init' to set defaults.[/dim]"
+            " Run 'outpour init' to set defaults.[/dim]"
         )
     else:
         is_default = exclude_patterns == DEFAULT_EXCLUDE_PATTERNS
@@ -2028,7 +2028,7 @@ def config_show():
     file_extensions = get_file_extensions()
     if not file_extensions:
         console.print("[bold]File Extensions[/bold] [dim](not configured)[/dim]")
-        console.print("  [dim]Using default: .md. Run 'crier init' to set explicitly.[/dim]")
+        console.print("  [dim]Using default: .md. Run 'outpour init' to set explicitly.[/dim]")
     else:
         is_default = file_extensions == DEFAULT_FILE_EXTENSIONS
         label = 'default' if is_default else 'custom'
@@ -2124,7 +2124,7 @@ def profile():
 def profile_set(name: str, platforms: tuple[str, ...]):
     """Create or update a profile.
 
-    Example: crier config profile set blogs devto hashnode ghost
+    Example: outpour config profile set blogs devto hashnode ghost
     """
     set_profile(name, list(platforms))
     console.print(f"[green]Profile '{name}' set to: {', '.join(platforms)}[/green]")
@@ -2138,7 +2138,7 @@ def profile_show(name: str | None):
 
     if not profiles:
         console.print("[yellow]No profiles defined yet.[/yellow]")
-        console.print("[dim]Create one with: crier config profile set <name> <platforms>[/dim]")
+        console.print("[dim]Create one with: outpour config profile set <name> <platforms>[/dim]")
         return
 
     if name:
@@ -2356,7 +2356,7 @@ def llm_show():
     if not is_llm_configured():
         console.print("[dim]Configure with:[/dim]")
         console.print("[dim]  export OPENAI_API_KEY=sk-...  (simplest)[/dim]")
-        console.print("[dim]  crier config llm set api_key <key>[/dim]")
+        console.print("[dim]  outpour config llm set api_key <key>[/dim]")
 
 
 @llm.command(name="set")
@@ -2370,12 +2370,12 @@ def llm_set(key: str, value: str):
     KEY is one of: api_key, base_url, model, temperature, retry_count, truncate_fallback
 
     Examples:
-        crier config llm set api_key sk-...
-        crier config llm set base_url http://localhost:11434/v1
-        crier config llm set model llama3
-        crier config llm set temperature 0.8
-        crier config llm set retry_count 3
-        crier config llm set truncate_fallback true
+        outpour config llm set api_key sk-...
+        outpour config llm set base_url http://localhost:11434/v1
+        outpour config llm set model llama3
+        outpour config llm set temperature 0.8
+        outpour config llm set retry_count 3
+        outpour config llm set truncate_fallback true
     """
     if key == "api_key":
         set_llm_config(api_key=value)
@@ -2714,7 +2714,7 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
                 )
                 console.print(
                     "[dim]Run 'crier llm set' to configure,"
-                    " or 'crier init' for guided setup.[/dim]"
+                    " or 'outpour init' for guided setup.[/dim]"
                 )
             raise SystemExit(1)
         llm_provider = get_provider(llm_config)
@@ -3079,7 +3079,7 @@ def audit(path: str | None, platform_filter: tuple[str, ...], profile_name: str 
 
         if not api_key:
             if not silent:
-                hint = f"crier config set {platform}.api_key YOUR_KEY"
+                hint = f"outpour config set {platform}.api_key YOUR_KEY"
                 if platform in PLATFORMS:
                     api_url = getattr(PLATFORMS[platform], 'api_key_url', None)
                     if api_url:
@@ -3428,11 +3428,11 @@ def check(files: tuple[str, ...], platform_args: tuple[str, ...], check_all: boo
 
     \b
     Examples:
-      crier check article.md
-      crier check article.md --to bluesky --to devto
-      crier check --all --strict
-      crier check article.md --json
-      crier check article.md --check-links
+      outpour check article.md
+      outpour check article.md --to bluesky --to devto
+      outpour check --all --strict
+      outpour check article.md --json
+      outpour check article.md --check-links
     """
     import json as json_module
     import sys
@@ -3566,7 +3566,7 @@ def status(file: str | None, show_all: bool, verbose: bool):
 
         if not result:
             console.print(f"[yellow]No publication record found for {file}[/yellow]")
-            console.print("[dim]This file hasn't been published with crier yet.[/dim]")
+            console.print("[dim]This file hasn't been published with outpour yet.[/dim]")
             return
 
         canonical_url, article_data = result
@@ -3681,7 +3681,7 @@ def skill():
     Use the crier Claude Code plugin instead (queelius-plugins marketplace).
     """
     console.print(
-        "[yellow]Warning:[/yellow] The built-in 'crier skill' command is deprecated.\n"
+        "[yellow]Warning:[/yellow] The built-in 'outpour skill' command is deprecated.\n"
         "Use the crier Claude Code plugin instead "
         "(install from the queelius-plugins marketplace).\n"
     )
@@ -3779,14 +3779,14 @@ def skill_status():
 
     # Show hints
     if not status["global"] and not status["local"]:
-        console.print("\n[dim]Install with: crier skill install[/dim]")
+        console.print("\n[dim]Install with: outpour skill install[/dim]")
     elif needs_update:
         console.print()
         for location in needs_update:
             flag = " --local" if location == "local" else ""
             console.print(
                 f"[yellow]Update {location} skill with:"
-                f" crier skill install{flag}[/yellow]"
+                f" outpour skill install{flag}[/yellow]"
             )
 
 
@@ -3811,11 +3811,11 @@ def skill_show():
 def register(file: str, platform_name: str, url: str | None, article_id: str | None, yes: bool):
     """Manually register a file as published to a platform.
 
-    Use this when you've published content outside of crier and want to
+    Use this when you've published content outside of outpour and want to
     track it in the registry, or to fix registry entries.
 
     Example:
-        crier register article.md --platform medium --url https://medium.com/@user/article
+        outpour register article.md --platform medium --url https://medium.com/@user/article
     """
     article = parse_markdown_file(file)
 
@@ -3826,7 +3826,7 @@ def register(file: str, platform_name: str, url: str | None, article_id: str | N
         console.print("[dim]  canonical_url: https://yoursite.com/path/to/article/[/dim]")
         console.print()
         console.print("[dim]Or set site_base_url for auto-inference:[/dim]")
-        console.print("[dim]  crier config set site_base_url https://yoursite.com[/dim]")
+        console.print("[dim]  outpour config set site_base_url https://yoursite.com[/dim]")
         return
 
     # Check if already registered
@@ -4131,7 +4131,7 @@ def schedule_run(dry_run: bool, json_output: bool):
     This command is designed to be called from cron.
 
     Example crontab entry (run every 5 minutes):
-        */5 * * * * cd /path/to/project && crier schedule run
+        */5 * * * * cd /path/to/project && outpour schedule run
     """
     import json as json_module
 
@@ -4405,10 +4405,10 @@ def delete(file: str, platform_args: tuple[str, ...], delete_all: bool,
     Updates the registry to mark the publication as deleted.
 
     Examples:
-        crier delete article.md --from devto
-        crier delete article.md --from devto --from bluesky
-        crier delete article.md --all
-        crier delete article.md --all --dry-run
+        outpour delete article.md --from devto
+        outpour delete article.md --from devto --from bluesky
+        outpour delete article.md --all
+        outpour delete article.md --all --dry-run
     """
     import json as json_module
 
@@ -4463,8 +4463,8 @@ def delete(file: str, platform_args: tuple[str, ...], delete_all: bool,
             console.print("[red]Error: Specify platforms with --from or use --all[/red]")
             console.print()
             console.print("Examples:")
-            console.print("  crier delete article.md --from devto")
-            console.print("  crier delete article.md --all")
+            console.print("  outpour delete article.md --from devto")
+            console.print("  outpour delete article.md --all")
         raise SystemExit(1)
 
     if not platforms_to_delete:
@@ -4656,14 +4656,14 @@ def archive(file: str, json_output: bool):
     """Archive content (exclude from audit --publish).
 
     Archived content is marked as "retired" in the registry. It will be
-    excluded from `crier audit --publish` by default, but remains visible
-    in `crier status`.
+    excluded from `outpour audit --publish` by default, but remains visible
+    in `outpour status`.
 
     Use this when content is outdated but you don't want to delete it
     from platforms.
 
     Example:
-        crier archive article.md
+        outpour archive article.md
     """
     import json as json_module
 
@@ -4711,11 +4711,11 @@ def archive(file: str, json_output: bool):
 def unarchive(file: str, json_output: bool):
     """Unarchive content (include in audit --publish again).
 
-    Reverses the effect of `crier archive`. The content will be included
-    in `crier audit --publish` again.
+    Reverses the effect of `outpour archive`. The content will be included
+    in `outpour audit --publish` again.
 
     Example:
-        crier unarchive article.md
+        outpour unarchive article.md
     """
     import json as json_module
 
@@ -4781,11 +4781,11 @@ def stats(file: str | None, platforms: tuple[str, ...], refresh: bool,
     With a file argument, shows detailed stats for that article.
 
     Examples:
-        crier stats article.md
-        crier stats article.md --refresh
-        crier stats --top 10
-        crier stats --since 1m
-        crier stats --platform devto --json
+        outpour stats article.md
+        outpour stats article.md --refresh
+        outpour stats --top 10
+        outpour stats --since 1m
+        outpour stats --platform devto --json
     """
     import json as json_module
 

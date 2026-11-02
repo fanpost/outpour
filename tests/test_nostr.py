@@ -73,7 +73,12 @@ def test_publish_signs_and_returns_njump_url():
 
     captured = {}
     n = Nostr(PrivateKey().hex())
-    with patch.object(Nostr, "_publish_event", lambda self, e: captured.update(event=e)):
+
+    def fake_publish(self, e):
+        captured.update(event=e)
+        return {"wss://relay.damus.io": "accepted"}
+
+    with patch.object(Nostr, "_publish_event", fake_publish):
         res = n.publish(_article(body="my short take", is_rewrite=True))
     assert res.success is True
     ev = captured["event"]
@@ -91,7 +96,12 @@ def test_publish_composes_from_metadata_when_not_rewrite():
 
     captured = {}
     n = Nostr(PrivateKey().hex())
-    with patch.object(Nostr, "_publish_event", lambda self, e: captured.update(event=e)):
+
+    def fake_publish(self, e):
+        captured.update(event=e)
+        return {"wss://relay.damus.io": "accepted"}
+
+    with patch.object(Nostr, "_publish_event", fake_publish):
         res = n.publish(
             _article(title="My Post", description="A desc",
                      tags=["python", "x"], is_rewrite=False)

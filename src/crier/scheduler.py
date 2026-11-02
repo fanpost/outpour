@@ -183,7 +183,7 @@ def save_schedule(schedule: dict[str, Any]) -> None:
 def _schedule_lock():
     """Serialize read-modify-write cycles on schedule.yaml.
 
-    An hourly cron runner and a manual `crier publish --schedule` can
+    An hourly cron runner and a manual `outpour publish --schedule` can
     overlap; without a lock one write clobbers the other. Uses flock on
     POSIX; degrades to no locking where fcntl is unavailable (Windows),
     matching the previous behavior there.

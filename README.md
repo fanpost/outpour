@@ -185,7 +185,7 @@ Everything below is the full manual: platform details, configuration, every comm
 | **Bluesky** | `handle:app_password` | Short posts with link cards |
 | **Mastodon** | `instance:access_token` | Toots with hashtags |
 | **Pleroma** | `instance:access_token` | Mastodon-compatible API; also works for Akkoma |
-| **Nostr** | `nsec1...` or hex key, optionally `nsec1...\|wss://relay.a,wss://relay.b` | Signed notes to relays; needs `pip install 'crier[nostr]'` |
+| **Nostr** | `nsec1...` or hex key, optionally `nsec1...\|wss://relay.a,wss://relay.b` | Signed notes to relays; needs `pip install 'outpour[nostr]'` |
 | **Threads** | `user_id:access_token` | Short posts (no edit support) |
 | **Telegram** | `bot_token:chat_id` | Channel/group posts |
 | **Discord** | `webhook_url` | Server announcements |
@@ -220,23 +220,23 @@ For platforms with restrictive API access (Medium, LinkedIn, Twitter/X), you can
 
 ```bash
 # Explicit manual mode with --manual flag
-crier publish post.md --to medium --manual
-crier publish post.md --to linkedin --manual
+outpour publish post.md --to medium --manual
+outpour publish post.md --to linkedin --manual
 
 # Skip auto-opening browser
-crier publish post.md --to twitter --manual --no-browser
+outpour publish post.md --to twitter --manual --no-browser
 ```
 
-**Auto-manual mode**: If you configure a platform's API key to `"manual"`, crier automatically uses manual mode:
+**Auto-manual mode**: If you configure a platform's API key to `"manual"`, outpour automatically uses manual mode:
 
 ```bash
 # Configure platform for manual mode (no API key needed)
-crier config set twitter.api_key manual
-crier config set linkedin.api_key manual
+outpour config set twitter.api_key manual
+outpour config set linkedin.api_key manual
 
 # Now these automatically use manual mode without --manual flag
-crier publish post.md --to twitter
-crier publish post.md --to linkedin
+outpour publish post.md --to twitter
+outpour publish post.md --to linkedin
 ```
 
 Manual mode workflow:
@@ -256,7 +256,7 @@ The registry (publication state) is a SQLite database at `~/.config/crier/crier.
 ### Example config
 
 ```yaml
-# Points crier at your content project (e.g., a Hugo site)
+# Points outpour at your content project (e.g., a Hugo site)
 site_root: ~/github/repos/my-blog
 site_base_url: https://example.com
 
@@ -366,42 +366,42 @@ are supported; code examples and surrounding formatting are preserved.
 
 ```bash
 # Publishing
-crier init                              # Interactive setup wizard
-crier publish FILE --to PLATFORM        # Publish to platform(s)
-crier publish FILE --to PLATFORM --manual  # Manual copy-paste mode
-crier publish FILE --to bluesky --thread   # Publish as thread
-crier audit                             # See what's missing/changed
-crier audit --publish                   # Bulk publish interactively
-crier audit --publish --yes             # Bulk publish without prompting
+outpour init                              # Interactive setup wizard
+outpour publish FILE --to PLATFORM        # Publish to platform(s)
+outpour publish FILE --to PLATFORM --manual  # Manual copy-paste mode
+outpour publish FILE --to bluesky --thread   # Publish as thread
+outpour audit                             # See what's missing/changed
+outpour audit --publish                   # Bulk publish interactively
+outpour audit --publish --yes             # Bulk publish without prompting
 
 # Content Management
-crier search                            # List all content
-crier search --tag python --since 1w    # Filter by tag and date
-crier status [FILE]                     # Show publication status
-crier list PLATFORM                     # List your articles
-crier delete FILE --from PLATFORM       # Delete from platform
-crier archive FILE                      # Archive (exclude from audit)
-crier unarchive FILE                    # Unarchive
+outpour search                            # List all content
+outpour search --tag python --since 1w    # Filter by tag and date
+outpour status [FILE]                     # Show publication status
+outpour list PLATFORM                     # List your articles
+outpour delete FILE --from PLATFORM       # Delete from platform
+outpour archive FILE                      # Archive (exclude from audit)
+outpour unarchive FILE                    # Unarchive
 
 # Scheduling
-crier schedule list                     # List scheduled posts
-crier schedule show ID                  # Show scheduled post details
-crier schedule cancel ID                # Cancel scheduled post
-crier schedule run                      # Publish due posts
+outpour schedule list                     # List scheduled posts
+outpour schedule show ID                  # Show scheduled post details
+outpour schedule cancel ID                # Cancel scheduled post
+outpour schedule run                      # Publish due posts
 
 # Analytics
-crier stats                             # Show stats for all content
-crier stats FILE                        # Show stats for specific file
-crier stats --top 10                    # Top 10 by engagement
-crier stats --refresh                   # Refresh from platforms
+outpour stats                             # Show stats for all content
+outpour stats FILE                        # Show stats for specific file
+outpour stats --top 10                    # Top 10 by engagement
+outpour stats --refresh                   # Refresh from platforms
 
 # Configuration
-crier config show                       # Show configuration
-crier config set KEY VALUE              # Set configuration
-crier config llm show                   # Show LLM configuration
-crier config llm test                   # Test LLM connection
-crier doctor                            # Verify API keys work
-crier mcp                               # Start MCP server (for Claude Code)
+outpour config show                       # Show configuration
+outpour config set KEY VALUE              # Set configuration
+outpour config llm show                   # Show LLM configuration
+outpour config llm test                   # Test LLM connection
+outpour doctor                            # Verify API keys work
+outpour mcp                               # Start MCP server (for Claude Code)
 ```
 
 ## Automation
@@ -412,8 +412,8 @@ Use `--batch` for fully automated, non-interactive publishing (CI/CD):
 
 ```bash
 # Batch mode implies --yes --json, skips manual/import platforms
-crier publish post.md --to devto --to bluesky --batch
-crier audit --publish --batch --long-form
+outpour publish post.md --to devto --to bluesky --batch
+outpour audit --publish --batch --long-form
 ```
 
 Batch mode behavior:
@@ -426,8 +426,8 @@ Batch mode behavior:
 Use `--json` for machine-readable output:
 
 ```bash
-crier publish post.md --to devto --json
-crier audit --json
+outpour publish post.md --to devto --json
+outpour audit --json
 ```
 
 JSON output structure:
@@ -445,7 +445,7 @@ JSON output structure:
 Use `--auto-rewrite` to generate short-form content using an LLM:
 
 ```bash
-crier publish post.md --to bluesky --auto-rewrite
+outpour publish post.md --to bluesky --auto-rewrite
 ```
 
 **Simplest setup:** If you have `OPENAI_API_KEY` set, it just works (defaults to gpt-4o-mini).
@@ -474,27 +474,27 @@ The `audit` command supports powerful filtering for targeted bulk operations:
 
 ```bash
 # Post to API platforms only (skip manual/import)
-crier audit --publish --yes --only-api
+outpour audit --publish --yes --only-api
 
 # Long-form only (skip bluesky, mastodon, twitter, threads)
-crier audit --publish --yes --long-form
+outpour audit --publish --yes --long-form
 
 # Random sample of 5 articles
-crier audit --publish --yes --sample 5
+outpour audit --publish --yes --sample 5
 
 # Filter by path
-crier audit content/post --publish --yes --only-api
+outpour audit content/post --publish --yes --only-api
 
 # Filter by date (relative)
-crier audit --since 1w --publish --yes              # Last week
-crier audit --since 1m --publish --yes              # Last month
-crier audit --since 7d --until 1d --publish --yes   # 7 days ago to yesterday
+outpour audit --since 1w --publish --yes              # Last week
+outpour audit --since 1m --publish --yes              # Last month
+outpour audit --since 7d --until 1d --publish --yes   # 7 days ago to yesterday
 
 # Filter by date (absolute)
-crier audit --since 2025-12-01 --until 2025-12-31 --publish --yes
+outpour audit --since 2025-12-01 --until 2025-12-31 --publish --yes
 
 # Combine filters
-crier audit content/post --since 1m --only-api --long-form --sample 10 --publish --yes
+outpour audit content/post --since 1m --only-api --long-form --sample 10 --publish --yes
 ```
 
 ### Filter Reference
@@ -521,13 +521,13 @@ Remove published content from platforms:
 
 ```bash
 # Delete from specific platform
-crier delete post.md --from devto
+outpour delete post.md --from devto
 
 # Delete from all platforms
-crier delete post.md --all
+outpour delete post.md --all
 
 # Preview what would be deleted
-crier delete post.md --all --dry-run
+outpour delete post.md --all --dry-run
 ```
 
 Deletion records are preserved in the registry (marked as deleted) to prevent accidental re-publishing.
@@ -538,13 +538,13 @@ Archive content to exclude it from `audit --publish`:
 
 ```bash
 # Archive (exclude from bulk publishing)
-crier archive post.md
+outpour archive post.md
 
 # Unarchive (include again)
-crier unarchive post.md
+outpour unarchive post.md
 
 # Include archived in audit
-crier audit --include-archived
+outpour audit --include-archived
 ```
 
 ## Scheduling
@@ -553,20 +553,20 @@ Schedule posts for future publication:
 
 ```bash
 # Schedule a post
-crier publish post.md --to devto --schedule "tomorrow 9am"
-crier publish post.md --to bluesky --schedule "2025-02-01 14:00"
+outpour publish post.md --to devto --schedule "tomorrow 9am"
+outpour publish post.md --to bluesky --schedule "2025-02-01 14:00"
 
 # View scheduled posts
-crier schedule list
+outpour schedule list
 
 # Show details
-crier schedule show abc123
+outpour schedule show abc123
 
 # Cancel a scheduled post
-crier schedule cancel abc123
+outpour schedule cancel abc123
 
 # Publish all due posts
-crier schedule run
+outpour schedule run
 ```
 
 Supports natural language times ("tomorrow", "next monday 9am") and ISO format.
@@ -577,22 +577,22 @@ Track engagement across platforms:
 
 ```bash
 # Show stats for all content
-crier stats
+outpour stats
 
 # Stats for specific file
-crier stats post.md
+outpour stats post.md
 
 # Top articles by engagement
-crier stats --top 10
+outpour stats --top 10
 
 # Filter by date
-crier stats --since 1m
+outpour stats --since 1m
 
 # Refresh from platforms (ignore cache)
-crier stats --refresh
+outpour stats --refresh
 
 # JSON output
-crier stats --json
+outpour stats --json
 ```
 
 Stats are cached for 1 hour. Supported platforms: dev.to, Bluesky, Mastodon.
@@ -603,12 +603,12 @@ Split long content into threads for social platforms:
 
 ```bash
 # Auto-split into thread
-crier publish post.md --to bluesky --thread
+outpour publish post.md --to bluesky --thread
 
 # Choose thread style
-crier publish post.md --to mastodon --thread --thread-style numbered  # 1/5, 2/5...
-crier publish post.md --to bluesky --thread --thread-style emoji      # 🧵 1/5...
-crier publish post.md --to mastodon --thread --thread-style simple    # No prefix
+outpour publish post.md --to mastodon --thread --thread-style numbered  # 1/5, 2/5...
+outpour publish post.md --to bluesky --thread --thread-style emoji      # 🧵 1/5...
+outpour publish post.md --to mastodon --thread --thread-style simple    # No prefix
 ```
 
 Thread splitting priority:
@@ -620,26 +620,26 @@ Supported platforms: Bluesky, Mastodon.
 
 ## Pre-Publish Validation
 
-Validate content before publishing with `crier check`:
+Validate content before publishing with `outpour check`:
 
 ```bash
 # Check a single file
-crier check post.md
+outpour check post.md
 
 # Check with platform context (validates platform-specific limits)
-crier check post.md --to bluesky --to devto
+outpour check post.md --to bluesky --to devto
 
 # Check all content
-crier check --all
+outpour check --all
 
 # Strict mode: warnings become errors
-crier check post.md --strict
+outpour check post.md --strict
 
 # Check external links (opt-in, makes HTTP requests)
-crier check post.md --check-links
+outpour check post.md --check-links
 
 # JSON output
-crier check post.md --json
+outpour check post.md --json
 ```
 
 **Checks performed:**
@@ -671,9 +671,9 @@ checks:
 Suppress non-essential output for scripting:
 
 ```bash
-crier publish post.md --to devto --quiet
-crier audit --publish --yes --quiet
-crier search --tag python --quiet
+outpour publish post.md --to devto --quiet
+outpour audit --publish --yes --quiet
+outpour search --tag python --quiet
 ```
 
 Quiet mode only shows errors and final results. Combine with `--json` for fully parseable output.
@@ -688,7 +688,7 @@ Quiet mode only shows errors and final results. Combine with `--json` for fully 
 
 ```bash
 # Check exit code in scripts
-crier publish post.md --to devto --batch
+outpour publish post.md --to devto --batch
 if [ $? -eq 2 ]; then
   echo "Some platforms failed, retrying..."
 fi
@@ -722,7 +722,7 @@ fi
 Uses copy-paste mode - generates formatted tweet text for manual posting.
 No API setup required. Just set any placeholder value:
 ```bash
-crier config set twitter.api_key manual
+outpour config set twitter.api_key manual
 ```
 
 ### Ghost
@@ -770,7 +770,7 @@ API publishing shares preparation, execution, and registry recording across the
 CLI, MCP, campaigns, audit/retry, and scheduled dispatch. Articles without a
 canonical URL can be tracked using their source file and title-derived identity.
 
-`crier reconcile --apply` backfills observed remote posts. It only marks a
+`outpour reconcile --apply` backfills observed remote posts. It only marks a
 publication deleted when the adapter explicitly reports a complete listing;
 limited or legacy listings report unmatched entries as `unverified`. Increasing
 `--limit` alone does not establish completeness.
@@ -802,7 +802,7 @@ Publication listings exclude failed attempts that have no remote post ID.
 
 ## Custom Platforms
 
-Extend crier with your own platforms by dropping a `.py` file in `~/.config/crier/platforms/`:
+Extend outpour with your own platforms by dropping a `.py` file in `~/.config/crier/platforms/`:
 
 ```python
 # ~/.config/crier/platforms/myblog.py
@@ -851,11 +851,11 @@ class MyBlog(Platform):
 Then configure your API key:
 
 ```bash
-crier config set platforms.myblog.api_key <your-key>
-crier publish article.md --to myblog
+outpour config set platforms.myblog.api_key <your-key>
+outpour publish article.md --to myblog
 ```
 
-Pick a `name` that does not collide with a built-in platform (`crier platforms` lists them): a user plugin with the same name as a built-in replaces it. Files starting with `_` are skipped. Broken plugins emit a warning but don't crash crier.
+Pick a `name` that does not collide with a built-in platform (`outpour platforms` lists them): a user plugin with the same name as a built-in replaces it. Files starting with `_` are skipped. Broken plugins emit a warning but don't crash outpour.
 
 ## License
 

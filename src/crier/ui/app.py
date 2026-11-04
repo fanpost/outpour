@@ -182,7 +182,7 @@ def _action_forms(service: Any, path: str, enabled: bool = True) -> str:
         "<label>When (for example: 2026-11-02 09:00, tomorrow 9am, in 2 hours)</label>"
         f"<input type='text' name='when' required{off}>"
         f"<label><input type='checkbox' name='draft' value='1'{off}> Draft (where the platform supports it)</label>"
-        f"<button type='submit'{off}>Schedule</button></form></div>"
+        f"<button type='submit'{off}>Schedule publish</button></form></div>"
     )
 
 
@@ -192,9 +192,13 @@ def _results_rows(results: list[dict[str, Any]], kind: str) -> str:
         if item.get("success"):
             if kind == "publish":
                 detail = item.get("url") or item.get("article_id") or "published"
+                if isinstance(detail, str) and detail.startswith(("http://", "https://")):
+                    detail = f"<a href='{_esc(detail)}'>{_esc(detail)}</a>"
+                else:
+                    detail = _esc(detail)
                 rows.append(
                     f"<tr><td>{_esc(item['platform'])}</td>"
-                    f"<td class='ok'>Published</td><td>{_esc(detail)}</td></tr>"
+                    f"<td class='ok'>Published</td><td>{detail}</td></tr>"
                 )
             else:
                 rows.append(
@@ -335,7 +339,8 @@ def create_app(service: Any = None) -> FastAPI:
             f"<p>Article: {_esc(Path(path).name)}</p>"
             "<table><tr><th>Platform</th><th>Result</th><th>Detail</th></tr>"
             + _results_rows(results, "publish")
-            + "</table><p><a href='/articles'>Back to articles</a></p>"
+            + "</table><p><a href='/articles'>Back to articles</a> · "
+            f"<a href='/editor?path={_esc(path)}'>Edit this article</a></p>"
         )
         return _page("Publish results", body)
 
@@ -382,7 +387,8 @@ def create_app(service: Any = None) -> FastAPI:
             f"<p>Article: {_esc(Path(path).name)}; when: {_esc(when)}</p>"
             "<table><tr><th>Platform</th><th>Result</th><th>Detail</th></tr>"
             + _results_rows(results, "schedule")
-            + "</table><p><a href='/schedule'>View schedule</a></p>"
+            + "</table><p><a href='/schedule'>View schedule</a> · "
+            "<a href='/articles'>Back to articles</a></p>"
         )
         return _page("Schedule results", body)
 

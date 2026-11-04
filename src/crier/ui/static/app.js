@@ -54,9 +54,21 @@ document.addEventListener("DOMContentLoaded", function () {
       focusToggle.textContent = on ? "Exit focus" : "Focus mode";
     });
   }
+  // Confirm dialogs name the exact platforms the user ticked, so the
+  // confirmation states what will actually happen instead of a generic
+  // "the selected platforms". Forms without platform checkboxes (the
+  // schedule cancel button) keep their static message.
   document.querySelectorAll("form[data-confirm]").forEach(function (form) {
     form.addEventListener("submit", function (event) {
-      if (!window.confirm(form.getAttribute("data-confirm"))) {
+      var message = form.getAttribute("data-confirm");
+      var chosen = [];
+      form.querySelectorAll("input[name='platforms']:checked").forEach(function (box) {
+        chosen.push(box.value);
+      });
+      if (chosen.length && message.indexOf("the selected platforms") !== -1) {
+        message = message.replace("the selected platforms", chosen.join(", "));
+      }
+      if (!window.confirm(message)) {
         event.preventDefault();
       }
     });

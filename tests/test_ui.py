@@ -223,6 +223,36 @@ def test_publish_results_show_success_and_failure_honestly(client):
     assert "manual mode (not API)" in response.text
 
 
+def test_publish_results_link_live_url_and_offer_next_steps(client):
+    response = client.post(
+        "/publish",
+        data={"path": "/content/first.md", "platforms": ["devto", "medium"], "draft": "1"},
+    )
+    assert response.status_code == 200
+    assert "<a href='https://dev.to/x/first'>https://dev.to/x/first</a>" in response.text
+    assert "Back to articles" in response.text
+    assert "Edit this article" in response.text
+    assert "/editor?path=/content/first.md" in response.text
+
+
+def test_schedule_results_offer_next_steps(client):
+    response = client.post(
+        "/schedule",
+        data={"path": "/content/first.md", "platforms": ["devto"], "when": "2026-11-02 09:00"},
+    )
+    assert response.status_code == 200
+    assert "View schedule" in response.text
+    assert "Back to articles" in response.text
+
+
+def test_static_js_confirm_names_selected_platforms(client):
+    response = client.get("/static/app.js")
+    assert response.status_code == 200
+    assert "input[name='platforms']:checked" in response.text
+    assert "the selected platforms" in response.text
+    assert "chosen.join" in response.text
+
+
 def test_schedule_results_and_unparseable_time(client):
     ok = client.post(
         "/schedule",

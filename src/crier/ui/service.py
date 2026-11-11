@@ -157,6 +157,8 @@ def save_article(
     (or the working directory when none is configured). The filename
     comes from the explicit filename field, else a slug of the title.
     """
+    if not (fields.get("title") or "").strip():
+        raise ValueError("Give the article a title before saving.")
     if path:
         resolved = resolve_article_path(path)
         frontmatter, _old = parse_front_matter(resolved.read_text()) if resolved.exists() else ({}, "")

@@ -36,7 +36,7 @@ button.primary{background:var(--primary);color:#fff;border:1px solid var(--prima
 .statusline{display:flex;gap:1rem;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:.3rem 0;margin-top:.5rem}
 nav,h1,h2,.card,.hosted,.theme-toggle{transition:opacity .25s}
 body.focus nav,body.focus h1,body.focus h2,body.focus .card,body.focus .hosted,body.focus .theme-toggle{opacity:.15}
-body.focus form[action='/editor'] label,body.focus form[action='/editor'] input{opacity:.3}
+body.focus form[action='/editor'] label,body.focus form[action='/editor'] input,body.focus form[action='/editor'] details{opacity:.3}
 """
 
 WAITLIST_URL = (
@@ -148,15 +148,17 @@ def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, erro
         f"<input type='hidden' name='path' value='{_esc(path)}'>"
         f"{filename_field}"
         "<label>Title</label>"
-        f"<input type='text' name='title' value='{_esc(article['title']) if article else ''}'>"
+        f"<input type='text' name='title' required value='{_esc(article['title']) if article else ''}'>"
         "<label>Description</label>"
         f"<input type='text' name='description' value='{_esc(article['description']) if article else ''}'>"
         "<label>Tags (comma separated)</label>"
         f"<input type='text' name='tags' value='{_esc(tags)}'>"
+        "<details><summary>Advanced metadata</summary>"
         "<label>Canonical URL</label>"
         f"<input type='text' name='canonical_url' value='{_esc(article['canonical_url']) if article else ''}'>"
         "<label>Cover image URL</label>"
         f"<input type='text' name='cover_image' value='{_esc(article['cover_image']) if article else ''}'>"
+        "</details>"
         "<label>Body (markdown)</label>"
         f"<textarea name='body'>{_esc(article['body']) if article else ''}</textarea>"
         f"{status_line}"
@@ -212,6 +214,21 @@ def _results_rows(results: list[dict[str, Any]], kind: str) -> str:
                 f"<td class='bad'>Failed</td><td>{_esc(item.get('error'))}</td></tr>"
             )
     return "".join(rows)
+
+
+def _edit_link(path: str) -> str:
+    # Error pages are not dead ends: link back to the editor for the
+    # same article, so the user can fix the input that failed.
+    if not path:
+        return ""
+    return f"<p><a href='/editor?path={_esc(path)}'>Edit this article</a></p>"
+
+
+def _attempted_when(when: str) -> str:
+    # Echo the time the user typed, so a parse error names what failed.
+    if not when.strip():
+        return ""
+    return f"<p>When you entered: {_esc(when)}</p>"
 
 
 def create_app(service: Any = None) -> FastAPI:
@@ -330,11 +347,17 @@ def create_app(service: Any = None) -> FastAPI:
         platforms = form.getlist("platforms")
         draft = bool(form.get("draft"))
         if not platforms:
-            return _page("Publish results", "<p class='bad'>No platforms selected.</p>")
+            return _page(
+                "Publish results",
+                "<p class='bad'>No platforms selected.</p>" + _edit_link(path),
+            )
         try:
             results = svc.publish_article(path, platforms, draft)
         except ValueError as exc:
-            return _page("Publish results", f"<p class='bad'>{_esc(exc)}</p>")
+            return _page(
+                "Publish results",
+                f"<p class='bad'>{_esc(exc)}</p>" + _edit_link(path),
+            )
         body = (
             f"<p>Article: {_esc(Path(path).name)}</p>"
             "<table><tr><th>Platform</th><th>Result</th><th>Detail</th></tr>"
@@ -378,11 +401,21 @@ def create_app(service: Any = None) -> FastAPI:
         when = form.get("when") or ""
         draft = bool(form.get("draft"))
         if not platforms:
-            return _page("Schedule results", "<p class='bad'>No platforms selected.</p>")
+            return _page(
+                "Schedule results",
+                "<p class='bad'>No platforms selected.</p>"
+                + _attempted_when(when)
+                + _edit_link(path),
+            )
         try:
             results = svc.schedule_article(path, platforms, when, draft)
         except ValueError as exc:
-            return _page("Schedule results", f"<p class='bad'>{_esc(exc)}</p>")
+            return _page(
+                "Schedule results",
+                f"<p class='bad'>{_esc(exc)}</p>"
+                + _attempted_when(when)
+                + _edit_link(path),
+            )
         body = (
             f"<p>Article: {_esc(Path(path).name)}; when: {_esc(when)}</p>"
             "<table><tr><th>Platform</th><th>Result</th><th>Detail</th></tr>"

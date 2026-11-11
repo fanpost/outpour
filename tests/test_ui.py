@@ -60,6 +60,8 @@ class FakeService:
         return None
 
     def save_article(self, path, fields, body, filename=None):
+        if not (fields.get("title") or "").strip():
+            raise ValueError("Give the article a title before saving.")
         if body == "trigger-error":
             raise ValueError("Cannot save: bad path")
         self.saved.append({"path": path, "fields": fields, "body": body, "filename": filename})
@@ -99,6 +101,8 @@ class FakeService:
         ]
 
     def schedule_article(self, path, platforms, when, draft):
+        if when == "raise-bad-time":
+            raise ValueError("Could not parse schedule time: raise-bad-time")
         if when == "not a time at all !!!":
             return [
                 {
@@ -191,6 +195,54 @@ def test_editor_defaults_to_configured_platforms_only(client):
     assert re.search(r"value='devto'[^>]*checked", response.text)
     assert re.search(r"value='medium'[^>]*checked", response.text)
     assert not re.search(r"value='hashnode'[^>]*checked", response.text)
+
+
+def test_editor_collapses_advanced_metadata_and_requires_title(client):
+    response = client.get("/editor", params={"path": "/content/first.md"})
+    assert response.status_code == 200
+    assert "<details><summary>Advanced metadata</summary>" in response.text
+    assert "name='title' required" in response.text
+    details_start = response.text.index("<details>")
+    assert "name='canonical_url'" in response.text[details_start:]
+    assert "name='cover_image'" in response.text[details_start:]
+
+
+def test_save_blank_title_rejected_with_input_preserved(client):
+    response = client.post(
+        "/editor",
+        data={
+            "path": "/content/first.md",
+            "title": "   ",
+            "description": "",
+            "tags": "ai",
+            "canonical_url": "",
+            "cover_image": "",
+            "body": "kept body",
+        },
+    )
+    assert response.status_code == 400
+    assert "Give the article a title before saving." in response.text
+    assert "kept body" in response.text
+
+
+def test_publish_no_platforms_links_back_to_editor(client):
+    response = client.post("/publish", data={"path": "/content/first.md"})
+    assert response.status_code == 200
+    assert "No platforms selected." in response.text
+    assert "Edit this article" in response.text
+    assert "/editor?path=/content/first.md" in response.text
+
+
+def test_schedule_error_keeps_time_and_edit_link(client):
+    response = client.post(
+        "/schedule",
+        data={"path": "/content/first.md", "platforms": ["devto"], "when": "raise-bad-time"},
+    )
+    assert response.status_code == 200
+    assert "Could not parse schedule time" in response.text
+    assert "When you entered: raise-bad-time" in response.text
+    assert "Edit this article" in response.text
+    assert "/editor?path=/content/first.md" in response.text
 
 
 def test_editor_save_error_preserves_input(client):
@@ -395,6 +447,21 @@ def test_service_discovers_articles_in_content_dir(tmp_path, monkeypatch):
     by_name = {a["name"]: a for a in articles}
     assert by_name["with-frontmatter.md"]["tags"] == ["ai", "seo"]
     assert by_name["plain.md"]["title"] == "plain"
+
+
+def test_service_save_blank_title_rejected(tmp_path, monkeypatch):
+    content = tmp_path / "content"
+    content.mkdir()
+    monkeypatch.setattr(ui_service.config, "get_content_paths", lambda: [str(content)])
+    monkeypatch.setattr(ui_service.config, "get_project_root", lambda: tmp_path)
+    with pytest.raises(ValueError, match="title before saving"):
+        ui_service.save_article(
+            None,
+            {"title": "   ", "description": "", "tags": "", "canonical_url": "", "cover_image": ""},
+            "# Body\n",
+            filename="no-title",
+        )
+    assert not (content / "no-title.md").exists()
 
 
 def test_service_save_round_trip(tmp_path, monkeypatch):

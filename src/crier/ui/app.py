@@ -13,6 +13,7 @@ import html
 from importlib import resources
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -106,7 +107,7 @@ def _status_text(name: str, body: str) -> str:
     return " · ".join(parts)
 
 
-def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, error: str = "") -> str:
+def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, error: str = "", when: str = "") -> str:
     # An article dict with no path (e.g. rebuilt from a failed save) is
     # treated as new, so its filename field stays visible and its
     # submitted values are preserved instead of discarded with the error.
@@ -164,27 +165,31 @@ def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, erro
         f"{status_line}"
         "<button type='submit' class='primary'>Save article</button> "
         "<button type='button' id='focus-toggle'>Focus mode</button></form>"
-        + _action_forms(service, path, enabled=not is_new)
+        + _action_forms(service, path, enabled=not is_new, when=when)
     )
 
 
-def _action_forms(service: Any, path: str, enabled: bool = True) -> str:
+def _action_forms(service: Any, path: str, enabled: bool = True, when: str = "") -> str:
+    # One platform choice, not two: publish now and schedule for later
+    # share a single checkbox set, draft toggle and "when" field in one
+    # form. The two submit buttons override the form action with
+    # formaction, so each posts to its own endpoint with the same
+    # selection. The "when" field is only used by Schedule publish;
+    # JavaScript makes it required on that button, and without JS the
+    # server rejects an empty schedule time with a plain error.
     boxes = _platform_checkboxes(service, disabled=not enabled)
     off = "" if enabled else " disabled"
     note = "" if enabled else "<p class='dim'>Save the article first to publish or schedule it.</p>"
     return (
-        "<div class='card'><h3>Publish now</h3>" + note +
-        "<form method='post' action='/publish' data-confirm='Publish now to the selected platforms?' data-progress='Publishing...'>"
+        "<div class='card'><h3>Publish or schedule</h3>" + note +
+        "<form method='post' action='/publish'>"
         f"<input type='hidden' name='path' value='{_esc(path)}'>{boxes}"
         f"<label><input type='checkbox' name='draft' value='1'{off}> Draft (where the platform supports it)</label>"
-        f"<button type='submit'{off}>Publish now</button></form></div>"
-        "<div class='card'><h3>Schedule for later</h3>" + note +
-        "<form method='post' action='/schedule' data-confirm='Schedule for the selected platforms?' data-progress='Scheduling...'>"
-        f"<input type='hidden' name='path' value='{_esc(path)}'>{boxes}"
-        "<label>When (for example: 2026-11-02 09:00, tomorrow 9am, in 2 hours)</label>"
-        f"<input type='text' name='when' required{off}>"
-        f"<label><input type='checkbox' name='draft' value='1'{off}> Draft (where the platform supports it)</label>"
-        f"<button type='submit'{off}>Schedule publish</button></form></div>"
+        "<label>When (only for Schedule publish; for example: 2026-11-02 09:00, tomorrow 9am, in 2 hours)</label>"
+        f"<input type='text' name='when' value='{_esc(when)}'{off}>"
+        f"<button type='submit' formaction='/publish' data-confirm='Publish now to the selected platforms?' data-progress='Publishing...'{off}>Publish now</button> "
+        f"<button type='submit' formaction='/schedule' data-confirm='Schedule for the selected platforms?' data-progress='Scheduling...' data-require-when{off}>Schedule publish</button>"
+        "</form></div>"
     )
 
 
@@ -216,12 +221,17 @@ def _results_rows(results: list[dict[str, Any]], kind: str) -> str:
     return "".join(rows)
 
 
-def _edit_link(path: str) -> str:
+def _edit_link(path: str, when: str = "") -> str:
     # Error pages are not dead ends: link back to the editor for the
-    # same article, so the user can fix the input that failed.
+    # same article, so the user can fix the input that failed. A
+    # schedule time the user already typed travels in the link, so the
+    # editor reopens with it filled in instead of making them retype it.
     if not path:
         return ""
-    return f"<p><a href='/editor?path={_esc(path)}'>Edit this article</a></p>"
+    href = f"/editor?path={path}"
+    if when.strip():
+        href += f"&when={quote_plus(when)}"
+    return f"<p><a href='{_esc(href)}'>Edit this article</a></p>"
 
 
 def _attempted_when(when: str) -> str:
@@ -273,10 +283,11 @@ def create_app(service: Any = None) -> FastAPI:
     async def editor(request: Request) -> str:
         raw = request.query_params.get("path", "")
         saved = request.query_params.get("saved") == "1"
+        when = request.query_params.get("when", "")
         article = svc.get_article(raw) if raw else None
         if raw and article is None:
             return _page("Editor", "<p class='bad'>Article not found.</p>")
-        return _page("Editor", _editor_form(svc, article, saved))
+        return _page("Editor", _editor_form(svc, article, saved, when=when))
 
     @app.get("/editor/new", response_class=HTMLResponse)
     async def editor_new() -> str:
@@ -405,7 +416,7 @@ def create_app(service: Any = None) -> FastAPI:
                 "Schedule results",
                 "<p class='bad'>No platforms selected.</p>"
                 + _attempted_when(when)
-                + _edit_link(path),
+                + _edit_link(path, when),
             )
         try:
             results = svc.schedule_article(path, platforms, when, draft)
@@ -414,7 +425,7 @@ def create_app(service: Any = None) -> FastAPI:
                 "Schedule results",
                 f"<p class='bad'>{_esc(exc)}</p>"
                 + _attempted_when(when)
-                + _edit_link(path),
+                + _edit_link(path, when),
             )
         body = (
             f"<p>Article: {_esc(Path(path).name)}; when: {_esc(when)}</p>"

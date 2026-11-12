@@ -56,11 +56,23 @@ document.addEventListener("DOMContentLoaded", function () {
   }
   // Confirm dialogs name the exact platforms the user ticked, so the
   // confirmation states what will actually happen instead of a generic
-  // "the selected platforms". Forms without platform checkboxes (the
-  // schedule cancel button) keep their static message.
-  document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+  // "the selected platforms". The message lives on the button that was
+  // clicked when a form has two actions (publish now vs schedule),
+  // and on the form otherwise (the schedule cancel button). A form
+  // with neither confirms nothing and submits plainly.
+  document.querySelectorAll("form").forEach(function (form) {
     form.addEventListener("submit", function (event) {
-      var message = form.getAttribute("data-confirm");
+      var submitter = event.submitter;
+      var message = null;
+      if (submitter && submitter.getAttribute) {
+        message = submitter.getAttribute("data-confirm");
+      }
+      if (!message) {
+        message = form.getAttribute("data-confirm");
+      }
+      if (!message) {
+        return;
+      }
       var chosen = [];
       form.querySelectorAll("input[name='platforms']:checked").forEach(function (box) {
         chosen.push(box.value);
@@ -73,22 +85,52 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
   });
+  // The "when" field belongs to scheduling only: it is required when
+  // the Schedule button is clicked, and ignored when Publish now is
+  // clicked. Without JavaScript the server still rejects an empty
+  // schedule time with a plain-language error.
+  document.querySelectorAll("form").forEach(function (form) {
+    var when = form.querySelector("input[name='when']");
+    if (!when) {
+      return;
+    }
+    form.querySelectorAll("button[type='submit']").forEach(function (button) {
+      button.addEventListener("click", function () {
+        when.required = button.hasAttribute("data-require-when");
+      });
+    });
+  });
   // Publish and schedule POSTs run server-side and can take a while
   // (slow platforms), during which the page otherwise showed nothing.
-  // On submit, show a working state at once: the button is disabled
-  // (which also blocks an accidental double submit) and its label
-  // switches to the form's progress text, with a status line under
-  // the form. If the confirm dialog cancelled the submit, this
-  // handler sees the prevented event and leaves the form untouched.
+  // On submit, show a working state at once: the clicked button is
+  // disabled (which also blocks an accidental double submit) and its
+  // label switches to the progress text, with a status line under
+  // the form. The progress text lives on the button that was clicked
+  // when a form has two actions, and on the form otherwise. If the
+  // confirm dialog cancelled the submit, this handler sees the
+  // prevented event and leaves the form untouched.
   // No per-platform progress is shown: the server answers only when
   // every platform has finished, so any finer claim would be invented.
-  document.querySelectorAll("form[data-progress]").forEach(function (form) {
+  document.querySelectorAll("form").forEach(function (form) {
     form.addEventListener("submit", function (event) {
       if (event.defaultPrevented) {
         return;
       }
-      var label = form.getAttribute("data-progress") || "Working...";
-      var button = form.querySelector("button[type='submit']");
+      var submitter = event.submitter;
+      var label = null;
+      if (submitter && submitter.getAttribute) {
+        label = submitter.getAttribute("data-progress");
+      }
+      if (!label) {
+        label = form.getAttribute("data-progress");
+      }
+      if (!label) {
+        return;
+      }
+      var button =
+        submitter && submitter.tagName === "BUTTON"
+          ? submitter
+          : form.querySelector("button[type='submit']");
       if (button) {
         button.disabled = true;
         button.textContent = label;

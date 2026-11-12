@@ -242,7 +242,30 @@ def test_schedule_error_keeps_time_and_edit_link(client):
     assert "Could not parse schedule time" in response.text
     assert "When you entered: raise-bad-time" in response.text
     assert "Edit this article" in response.text
-    assert "/editor?path=/content/first.md" in response.text
+    assert "/editor?path=/content/first.md&amp;when=raise-bad-time" in response.text
+
+
+def test_platform_choice_is_asked_once_not_twice(client):
+    import re
+
+    response = client.get("/editor", params={"path": "/content/first.md"})
+    assert response.status_code == 200
+    # One checkbox set for three platforms, shared by both actions.
+    assert response.text.count("name='platforms'") == 3
+    assert "formaction='/publish'" in response.text
+    assert "formaction='/schedule'" in response.text
+    assert "Publish now" in response.text
+    assert "Schedule publish" in response.text
+    # The draft toggle is shared too.
+    assert response.text.count("name='draft'") == 1
+
+
+def test_editor_reopens_with_the_schedule_time_prefilled(client):
+    response = client.get(
+        "/editor", params={"path": "/content/first.md", "when": "tomorrow 9am"}
+    )
+    assert response.status_code == 200
+    assert "name='when' value='tomorrow 9am'" in response.text
 
 
 def test_editor_save_error_preserves_input(client):
@@ -427,6 +450,17 @@ def test_static_js_handles_progress_state(client):
     assert "data-progress" in response.text
     assert "disabled" in response.text
     assert "defaultPrevented" in response.text
+
+
+def test_static_js_reads_confirm_and_progress_from_the_clicked_button(client):
+    response = client.get("/static/app.js")
+    assert response.status_code == 200
+    assert "event.submitter" in response.text
+    assert 'getAttribute("data-confirm")' in response.text
+    assert 'getAttribute("data-progress")' in response.text
+    # The schedule button makes "when" required; publish now does not.
+    assert "data-require-when" in response.text
+    assert "when.required" in response.text
 
 
 def test_service_discovers_articles_in_content_dir(tmp_path, monkeypatch):

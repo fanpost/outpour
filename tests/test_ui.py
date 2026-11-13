@@ -5,6 +5,7 @@ touched. The service layer itself is tested against a temporary
 content directory for article discovery and saving.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from crier.ui import create_app
 from crier.ui import service as ui_service
+from crier.ui.app import CSS
 
 
 class FakeService:
@@ -369,6 +371,41 @@ def test_pages_carry_hosted_waitlist_strip(client):
         assert response.status_code == 200
         assert "Join the hosted waitlist" in response.text
         assert "docs.google.com/forms" in response.text
+
+
+def test_hosted_strip_names_price_and_founding_lock(client):
+    response = client.get("/articles")
+    assert response.status_code == 200
+    assert "Expected $19 a month" in response.text
+    assert "founding price" in response.text
+
+
+def test_platforms_page_states_keys_stay_local(client):
+    response = client.get("/platforms")
+    assert response.status_code == 200
+    assert "Your keys live in your local config file" in response.text
+    assert "free and open source" in response.text
+
+
+def test_css_type_scale_has_at_most_five_sizes():
+    # The checklist caps a page at 5 text sizes. The UI keeps four:
+    # 1.75rem (h1), 1.25rem (h2), 1rem (body and h3) and .85rem
+    # (small print). Body has no font-size rule, so it is the 1rem base.
+    sizes = {float(value) for value in re.findall(r"font-size:\s*([\d.]+)rem", CSS)}
+    assert sizes <= {1.75, 1.25, 1.0, 0.85}
+    assert len(sizes) <= 5
+
+
+def test_css_spacing_uses_one_scale():
+    # One spacing scale: every margin, padding and gap value is 0, auto,
+    # or a multiple of .25rem up to 2rem, so sections share one rhythm.
+    allowed = {0.0, 0.25, 0.5, 1.0, 2.0}
+    for declaration in re.findall(r"(?:margin|padding|gap)[^:]*:([^;}]+)[;}]", CSS):
+        for token in declaration.replace(",", " ").split():
+            if token.endswith("rem"):
+                assert float(token[:-3]) in allowed, token
+            else:
+                assert token in {"0", "auto"}, token
 
 
 def test_pages_have_dark_mode_toggle_and_theme_script(client):

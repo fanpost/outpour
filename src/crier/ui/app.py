@@ -25,16 +25,17 @@ CSS = """
 :root[data-theme=dark]{--bg:#14161a;--fg:#e9e6df;--muted:#a3a099;--border:#3c4149;--field:#1d2026;--ok:#4cc38a;--bad:#ff8a7a;--link:#8ab4f8;--primary:#2f7fd0;--hosted:#b6b0a4;color-scheme:dark}
 body{font-family:'Courier Prime','Courier New',Courier,monospace;letter-spacing:.01em;background:var(--bg);max-width:900px;margin:2rem auto;padding:0 1rem;color:var(--fg)}
 a{color:var(--link)}
+h1{font-size:1.75rem} h2{font-size:1.25rem} h3{font-size:1rem}
 nav a{margin-right:1rem} table{border-collapse:collapse;width:100%}
-th,td{border:1px solid var(--border);padding:.4rem;text-align:left;vertical-align:top}
+th,td{border:1px solid var(--border);padding:.5rem;text-align:left;vertical-align:top}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--muted)}
-label{display:block;margin:.6rem 0 .2rem} input[type=text],textarea{width:100%;padding:.4rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit}
-textarea{height:22rem} button{padding:.4rem 1rem;margin-top:.8rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit;cursor:pointer}
+label{display:block;margin:.5rem 0 .25rem} input[type=text],textarea{width:100%;padding:.5rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit}
+textarea{height:22rem} button{padding:.5rem 1rem;margin-top:1rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit;cursor:pointer}
 fieldset{margin:1rem 0;border:1px solid var(--border)} .card{border:1px solid var(--border);padding:1rem;margin:1rem 0}
 button.primary{background:var(--primary);color:#fff;border:1px solid var(--primary)}
-.hosted{color:var(--hosted);font-size:.95rem}
-.theme-toggle{float:right;margin-top:.4rem}
-.statusline{display:flex;gap:1rem;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:.3rem 0;margin-top:.5rem}
+.hosted{color:var(--hosted);font-size:.85rem}
+.theme-toggle{float:right;margin-top:.5rem}
+.statusline{display:flex;gap:1rem;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:.25rem 0;margin-top:.5rem}
 nav,h1,h2,.card,.hosted,.theme-toggle{transition:opacity .25s}
 body.focus nav,body.focus h1,body.focus h2,body.focus .card,body.focus .hosted,body.focus .theme-toggle{opacity:.15}
 body.focus form[action='/editor'] label,body.focus form[action='/editor'] input,body.focus form[action='/editor'] details{opacity:.3}
@@ -48,6 +49,7 @@ WAITLIST_URL = (
 HOSTED_STRIP = (
     "<hr><p class='hosted'>Running Outpour on your own machine. Prefer not to? "
     "A hosted version is in the works: we run it, you just write. "
+    "Expected $19 a month. Join the waitlist and you lock that founding price for good. "
     f"<a href='{WAITLIST_URL}' target='_blank' rel='noopener'>"
     "Join the hosted waitlist</a></p>"
 )
@@ -460,6 +462,9 @@ def create_app(service: Any = None) -> FastAPI:
             "<p class='dim'>Key values are never shown here. Configure keys with "
             "<code>outpour config set platforms.&lt;name&gt;.api_key &lt;key&gt;</code> "
             "or the matching CRIER_&lt;PLATFORM&gt;_API_KEY environment variable.</p>"
+            "<p>Your keys live in your local config file and are sent only to the "
+            "platforms you publish to. Outpour is free and open source (MIT), "
+            "with no account and no tracking.</p>"
             "<table><tr><th>Platform</th><th>Description</th><th>Configured</th>"
             "<th>Mode</th><th>Key source</th></tr>" + "".join(rows) + "</table>"
         )

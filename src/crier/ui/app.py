@@ -18,6 +18,7 @@ from urllib.parse import quote_plus
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from .. import scheduler
 from .service import UIService
 
 CSS = """
@@ -29,7 +30,7 @@ h1{font-size:1.75rem} h2{font-size:1.25rem} h3{font-size:1rem}
 nav a{margin-right:1rem} table{border-collapse:collapse;width:100%}
 th,td{border:1px solid var(--border);padding:.5rem;text-align:left;vertical-align:top}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--muted)}
-label{display:block;margin:.5rem 0 .25rem} input[type=text],textarea{width:100%;padding:.5rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit}
+label{display:block;margin:.5rem 0 .25rem} input[type=text],input[type=datetime-local],textarea{width:100%;padding:.5rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit}
 textarea{height:22rem} button{padding:.5rem 1rem;margin-top:1rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit;cursor:pointer}
 fieldset{margin:1rem 0;border:1px solid var(--border)} .card{border:1px solid var(--border);padding:1rem;margin:1rem 0}
 button.primary{background:var(--primary);color:#fff;border:1px solid var(--primary)}
@@ -76,24 +77,60 @@ def _page(title: str, body: str) -> str:
 
 
 def _platform_checkboxes(service: Any, selected: set[str] | None = None, disabled: bool = False) -> str:
-    parts = ["<fieldset><legend>Platforms</legend>"]
+    # Grouped the way the Platforms page explains them: long-form
+    # platforms get the full article, announcement platforms get a
+    # short version with a link back. One flat list of 16 mixed
+    # platforms made the choice harder than the product's own mental
+    # model. A group renders only when it has platforms in it.
     off = " disabled" if disabled else ""
-    for platform in service.list_platforms():
-        name = platform["name"]
-        # Default path (no explicit selection): only configured platforms
-        # are checked, so one click publishes to everything that can work
-        # and an unconfigured platform is never silently included.
-        if selected is None:
-            checked = " checked" if platform.get("configured") else ""
-        else:
-            checked = " checked" if name in selected else ""
-        hint = "" if platform["configured"] else " (not configured)"
-        parts.append(
-            f"<label><input type='checkbox' name='platforms' value='{_esc(name)}'{checked}{off}> "
-            f"{_esc(name)}{_esc(hint)}</label>"
-        )
-    parts.append("</fieldset>")
-    return "".join(parts)
+    groups = [
+        ("Long-form platforms", "The full article.", False),
+        ("Announcement platforms", "A short version with a link back.", True),
+    ]
+    out = []
+    for legend, hint, want_short in groups:
+        boxes = []
+        for platform in service.list_platforms():
+            name = platform["name"]
+            if bool(platform.get("is_short_form", False)) != want_short:
+                continue
+            # Default path (no explicit selection): only configured
+            # platforms are checked, so one click publishes to
+            # everything that can work and an unconfigured platform
+            # is never silently included.
+            if selected is None:
+                checked = " checked" if platform.get("configured") else ""
+            else:
+                checked = " checked" if name in selected else ""
+            note = "" if platform["configured"] else " (not configured)"
+            boxes.append(
+                f"<label><input type='checkbox' name='platforms' value='{_esc(name)}'{checked}{off}> "
+                f"{_esc(name)}{_esc(note)}</label>"
+            )
+        if boxes:
+            out.append(
+                f"<fieldset><legend>{legend}</legend><p class='dim'>{hint}</p>"
+                + "".join(boxes)
+                + "</fieldset>"
+            )
+    return "".join(out)
+
+
+def _when_input_value(when: str) -> str:
+    """Convert a carried schedule time to a datetime-local value.
+
+    The picker needs YYYY-MM-DDTHH:MM in local wall-clock time.
+    The scheduler parser accepts the same natural-language and ISO
+    strings the old free-text field did, so a carried value like
+    "tomorrow 9am" becomes a concrete picker value, and an
+    unparseable value becomes blank instead of an invalid one.
+    """
+    if not when.strip():
+        return ""
+    parsed = scheduler.parse_schedule_time(when)
+    if parsed is None:
+        return ""
+    return parsed.astimezone().strftime("%Y-%m-%dT%H:%M")
 
 
 def _status_text(name: str, body: str) -> str:
@@ -165,7 +202,7 @@ def _editor_form(service: Any, article: dict[str, Any] | None, saved: bool, erro
         "<label>Body (markdown)</label>"
         f"<textarea name='body'>{_esc(article['body']) if article else ''}</textarea>"
         f"{status_line}"
-        "<button type='submit' class='primary'>Save article</button> "
+        "<button type='submit' class='primary' data-progress='Saving...'>Save article</button> "
         "<button type='button' id='focus-toggle'>Focus mode</button></form>"
         + _action_forms(service, path, enabled=not is_new, when=when)
     )
@@ -176,9 +213,13 @@ def _action_forms(service: Any, path: str, enabled: bool = True, when: str = "")
     # share a single checkbox set, draft toggle and "when" field in one
     # form. The two submit buttons override the form action with
     # formaction, so each posts to its own endpoint with the same
-    # selection. The "when" field is only used by Schedule publish;
-    # JavaScript makes it required on that button, and without JS the
-    # server rejects an empty schedule time with a plain error.
+    # selection. The "when" field is a datetime-local picker, the
+    # pattern every scheduler uses, so it needs no format examples in
+    # its label; the server still parses natural language ("tomorrow
+    # 9am") from direct posts, and a carried time is converted to a
+    # picker value by _when_input_value. JavaScript makes the field
+    # required only on the Schedule click, and without JS the server
+    # rejects an empty schedule time with a plain error.
     boxes = _platform_checkboxes(service, disabled=not enabled)
     off = "" if enabled else " disabled"
     note = "" if enabled else "<p class='dim'>Save the article first to publish or schedule it.</p>"
@@ -187,8 +228,8 @@ def _action_forms(service: Any, path: str, enabled: bool = True, when: str = "")
         "<form method='post' action='/publish'>"
         f"<input type='hidden' name='path' value='{_esc(path)}'>{boxes}"
         f"<label><input type='checkbox' name='draft' value='1'{off}> Draft (where the platform supports it)</label>"
-        "<label>When (only for Schedule publish; for example: 2026-11-02 09:00, tomorrow 9am, in 2 hours)</label>"
-        f"<input type='text' name='when' value='{_esc(when)}'{off}>"
+        "<label>When (only for Schedule publish)</label>"
+        f"<input type='datetime-local' name='when' value='{_esc(_when_input_value(when))}'{off}>"
         f"<button type='submit' formaction='/publish' data-confirm='Publish now to the selected platforms?' data-progress='Publishing...'{off}>Publish now</button> "
         f"<button type='submit' formaction='/schedule' data-confirm='Schedule for the selected platforms?' data-progress='Scheduling...' data-require-when{off}>Schedule publish</button>"
         "</form></div>"

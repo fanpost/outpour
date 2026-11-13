@@ -263,11 +263,75 @@ def test_platform_choice_is_asked_once_not_twice(client):
 
 
 def test_editor_reopens_with_the_schedule_time_prefilled(client):
+    # The picker needs a datetime-local value, so a carried time is
+    # converted: "2026-11-02 09:00" becomes "2026-11-02T09:00".
     response = client.get(
-        "/editor", params={"path": "/content/first.md", "when": "tomorrow 9am"}
+        "/editor", params={"path": "/content/first.md", "when": "2026-11-02 09:00"}
     )
     assert response.status_code == 200
-    assert "name='when' value='tomorrow 9am'" in response.text
+    assert "type='datetime-local' name='when' value='2026-11-02T09:00'" in response.text
+
+
+def test_editor_prefill_ignores_unparseable_schedule_time(client):
+    # An unparseable carried time leaves the picker blank instead of
+    # an invalid value; the schedule error page already echoes it.
+    response = client.get(
+        "/editor", params={"path": "/content/first.md", "when": "raise-bad-time"}
+    )
+    assert response.status_code == 200
+    assert "type='datetime-local' name='when' value=''" in response.text
+
+
+def test_platform_checkboxes_grouped_longform_and_announcement(client):
+    class GroupedService(FakeService):
+        def list_platforms(self):
+            return [
+                {"name": "devto", "description": "Dev.to", "configured": True, "mode": "api", "source": "env", "is_short_form": False},
+                {"name": "nostr", "description": "Nostr", "configured": False, "mode": "unconfigured", "source": None, "is_short_form": True},
+            ]
+
+    response = TestClient(create_app(service=GroupedService())).get(
+        "/editor", params={"path": "/content/first.md"}
+    )
+    assert response.status_code == 200
+    text = response.text
+    assert "Long-form platforms" in text
+    assert "The full article." in text
+    assert "Announcement platforms" in text
+    assert "A short version with a link back." in text
+    assert text.index("Long-form platforms") < text.index("value='devto'")
+    assert text.index("Announcement platforms") < text.index("value='nostr'")
+    # A group with no platforms does not render: the default fake has
+    # no short-form platform, so it shows long-form only.
+    plain = client.get("/editor", params={"path": "/content/first.md"})
+    assert "Long-form platforms" in plain.text
+    assert "Announcement platforms" not in plain.text
+
+
+def test_save_button_shows_progress_state(client):
+    response = client.get("/editor", params={"path": "/content/first.md"})
+    assert response.status_code == 200
+    assert "data-progress='Saving...'" in response.text
+
+
+def test_static_js_progress_shows_elapsed_time(client):
+    response = client.get("/static/app.js")
+    assert response.status_code == 200
+    assert "setInterval" in response.text
+    assert "elapsed" in response.text
+
+
+def test_schedule_time_parses_datetime_local_value():
+    # The picker submits "2026-11-14T09:00"; the scheduler must parse it.
+    from crier.scheduler import parse_schedule_time
+
+    assert parse_schedule_time("2026-11-14T09:00") is not None
+
+
+def test_service_list_platforms_marks_short_form():
+    by_name = {p["name"]: p for p in ui_service.list_platforms()}
+    assert by_name["nostr"]["is_short_form"] is True
+    assert by_name["devto"]["is_short_form"] is False
 
 
 def test_editor_save_error_preserves_input(client):

@@ -240,6 +240,7 @@ def list_platforms() -> list[dict[str, Any]]:
                 "configured": config.is_platform_configured(name),
                 "mode": config.get_platform_mode(name),
                 "source": config.get_api_key_source(name),
+                "is_short_form": config.is_short_form_platform(name),
             }
         )
     return platforms

@@ -105,12 +105,14 @@ document.addEventListener("DOMContentLoaded", function () {
   // On submit, show a working state at once: the clicked button is
   // disabled (which also blocks an accidental double submit) and its
   // label switches to the progress text, with a status line under
-  // the form. The progress text lives on the button that was clicked
-  // when a form has two actions, and on the form otherwise. If the
-  // confirm dialog cancelled the submit, this handler sees the
-  // prevented event and leaves the form untouched.
+  // the form that ticks up the elapsed seconds, so the wait feels
+  // shorter than a frozen label. The progress text lives on the
+  // button that was clicked when a form has two actions, and on the
+  // form otherwise. If the confirm dialog cancelled the submit, this
+  // handler sees the prevented event and leaves the form untouched.
   // No per-platform progress is shown: the server answers only when
   // every platform has finished, so any finer claim would be invented.
+  // The ticker shows elapsed time only, never a fake percentage.
   document.querySelectorAll("form").forEach(function (form) {
     form.addEventListener("submit", function (event) {
       if (event.defaultPrevented) {
@@ -138,8 +140,15 @@ document.addEventListener("DOMContentLoaded", function () {
       var status = document.createElement("p");
       status.className = "dim";
       status.setAttribute("role", "status");
-      status.textContent = label + " This can take a while for slow platforms.";
+      var started = Date.now();
+      var renderStatus = function () {
+        var elapsed = Math.floor((Date.now() - started) / 1000);
+        status.textContent =
+          label + " " + elapsed + "s elapsed. This can take a while for slow platforms.";
+      };
+      renderStatus();
       form.appendChild(status);
+      setInterval(renderStatus, 1000);
     });
   });
 });

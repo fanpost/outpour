@@ -10,13 +10,14 @@ runs on; it has no login of its own and must not be exposed publicly.
 from __future__ import annotations
 
 import html
+import json
 from importlib import resources
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 
 from .. import scheduler
 from .service import UIService
@@ -26,6 +27,7 @@ CSS = """
 :root[data-theme=dark]{--bg:#14161a;--fg:#e9e6df;--muted:#a3a099;--border:#3c4149;--field:#1d2026;--ok:#4cc38a;--bad:#ff8a7a;--link:#8ab4f8;--primary:#2f7fd0;--hosted:#b6b0a4;color-scheme:dark}
 body{font-family:'Courier Prime','Courier New',Courier,monospace;letter-spacing:.01em;background:var(--bg);max-width:900px;margin:2rem auto;padding:0 1rem;color:var(--fg)}
 a{color:var(--link)}
+.brand{color:var(--fg);text-decoration:none}
 h1{font-size:1.75rem} h2{font-size:1.25rem} h3{font-size:1rem}
 nav a{margin-right:1rem} table{border-collapse:collapse;width:100%}
 th,td{border:1px solid var(--border);padding:.5rem;text-align:left;vertical-align:top}
@@ -72,7 +74,7 @@ def _page(title: str, body: str) -> str:
         f"<title>{_esc(title)} - Outpour</title><style>{CSS}</style>"
         f"<script src='/static/app.js' defer></script></head><body>"
         "<button type='button' id='theme-toggle' class='theme-toggle'>Dark mode</button>"
-        f"<h1>Outpour</h1>{nav}<h2>{_esc(title)}</h2>{body}{HOSTED_STRIP}</body></html>"
+        f"<h1><a class='brand' href='/articles'>Outpour</a></h1>{nav}<h2>{_esc(title)}</h2>{body}{HOSTED_STRIP}</body></html>"
     )
 
 
@@ -264,6 +266,47 @@ def _results_rows(results: list[dict[str, Any]], kind: str) -> str:
     return "".join(rows)
 
 
+def _publish_results_body(path: str, results: list[dict[str, Any]]) -> str:
+    return (
+        f"<p>Article: {_esc(Path(path).name)}</p>"
+        "<table><tr><th>Platform</th><th>Result</th><th>Detail</th></tr>"
+        + _results_rows(results, "publish")
+        + "</table><p><a href='/articles'>Back to articles</a> · "
+        f"<a href='/editor?path={_esc(path)}'>Edit this article</a></p>"
+    )
+
+
+def _publish_stream(svc: Any, path: str, platforms: list[str], draft: bool):
+    """Server-sent progress for a publish: one event per platform.
+
+    Each event carries that platform's result as it finishes, so the
+    browser can name the platform that just completed instead of
+    waiting for all of them. The final event carries the full
+    results page, rendered exactly as the plain POST would return
+    it. A service without publish_article_iter (older fakes) falls
+    back to the list form, streamed as one event per result.
+    """
+    results: list[dict[str, Any]] = []
+    try:
+        iterator = getattr(svc, "publish_article_iter", None)
+        if iterator is None:
+            iterator = iter(svc.publish_article(path, platforms, draft))
+        else:
+            iterator = iterator(path, platforms, draft)
+        for item in iterator:
+            results.append(item)
+            yield "data: " + json.dumps({"done": False, **item}) + "\n\n"
+    except ValueError as exc:
+        body = _page(
+            "Publish results",
+            f"<p class='bad'>{_esc(exc)}</p>" + _edit_link(path),
+        )
+        yield "data: " + json.dumps({"done": True, "html": body}) + "\n\n"
+        return
+    body = _page("Publish results", _publish_results_body(path, results))
+    yield "data: " + json.dumps({"done": True, "html": body}) + "\n\n"
+
+
 def _edit_link(path: str, when: str = "") -> str:
     # Error pages are not dead ends: link back to the editor for the
     # same article, so the user can fix the input that failed. A
@@ -405,6 +448,16 @@ def create_app(service: Any = None) -> FastAPI:
                 "Publish results",
                 "<p class='bad'>No platforms selected.</p>" + _edit_link(path),
             )
+        # JavaScript asks for a stream (Accept: text/event-stream) so
+        # the progress line can name each platform as it finishes.
+        # A plain form post (no JS, or the JS fallback) gets the
+        # same results page in one response, as before.
+        if "text/event-stream" in request.headers.get("accept", ""):
+            return StreamingResponse(
+                _publish_stream(svc, path, platforms, draft),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
         try:
             results = svc.publish_article(path, platforms, draft)
         except ValueError as exc:
@@ -412,14 +465,7 @@ def create_app(service: Any = None) -> FastAPI:
                 "Publish results",
                 f"<p class='bad'>{_esc(exc)}</p>" + _edit_link(path),
             )
-        body = (
-            f"<p>Article: {_esc(Path(path).name)}</p>"
-            "<table><tr><th>Platform</th><th>Result</th><th>Detail</th></tr>"
-            + _results_rows(results, "publish")
-            + "</table><p><a href='/articles'>Back to articles</a> · "
-            f"<a href='/editor?path={_esc(path)}'>Edit this article</a></p>"
-        )
-        return _page("Publish results", body)
+        return _page("Publish results", _publish_results_body(path, results))
 
     @app.get("/schedule", response_class=HTMLResponse)
     async def schedule_page() -> str:

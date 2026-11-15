@@ -110,8 +110,15 @@ document.addEventListener("DOMContentLoaded", function () {
   // button that was clicked when a form has two actions, and on the
   // form otherwise. If the confirm dialog cancelled the submit, this
   // handler sees the prevented event and leaves the form untouched.
-  // No per-platform progress is shown: the server answers only when
-  // every platform has finished, so any finer claim would be invented.
+  // For a publish, the submit is streamed: the server sends one
+  // event per platform as it finishes (Accept: text/event-stream),
+  // and the status line names each platform as it completes, then
+  // the final event carries the results page, which replaces this
+  // document. That progress is real: the platforms publish in
+  // checkbox order, one event arrives per finished platform, and
+  // nothing is shown before the server reports it. If streaming
+  // fails or is unavailable, the form submits plainly and the
+  // server answers with the same results page in one response.
   // The ticker shows elapsed time only, never a fake percentage.
   document.querySelectorAll("form").forEach(function (form) {
     form.addEventListener("submit", function (event) {
@@ -133,6 +140,24 @@ document.addEventListener("DOMContentLoaded", function () {
         submitter && submitter.tagName === "BUTTON"
           ? submitter
           : form.querySelector("button[type='submit']");
+      var target =
+        (submitter && submitter.getAttribute
+          ? submitter.getAttribute("formaction")
+          : null) || form.getAttribute("action") || "";
+      var canStream =
+        target === "/publish" &&
+        window.fetch &&
+        window.TextDecoder &&
+        window.Response &&
+        window.Response.prototype &&
+        typeof window.Response.prototype.body !== "undefined";
+      if (!canStream) {
+        showWorking(form, button, label);
+        return;
+      }
+      // Streaming publish: prevent the plain post, fetch the same
+      // form with an event-stream accept, and narrate each platform.
+      event.preventDefault();
       if (button) {
         button.disabled = true;
         button.textContent = label;
@@ -140,15 +165,104 @@ document.addEventListener("DOMContentLoaded", function () {
       var status = document.createElement("p");
       status.className = "dim";
       status.setAttribute("role", "status");
+      form.appendChild(status);
       var started = Date.now();
+      var platforms = [];
+      form.querySelectorAll("input[name='platforms']:checked").forEach(function (box) {
+        platforms.push(box.value);
+      });
+      var finished = [];
       var renderStatus = function () {
         var elapsed = Math.floor((Date.now() - started) / 1000);
-        status.textContent =
-          label + " " + elapsed + "s elapsed. This can take a while for slow platforms.";
+        var text = label + " " + elapsed + "s elapsed.";
+        if (finished.length) {
+          text += " " + finished.join(" ");
+        }
+        var next = platforms[finished.length];
+        if (next) {
+          text += " Now publishing to " + next + ".";
+        }
+        status.textContent = text;
       };
       renderStatus();
-      form.appendChild(status);
-      setInterval(renderStatus, 1000);
+      var ticker = setInterval(renderStatus, 1000);
+      var url =
+        (submitter && submitter.getAttribute
+          ? submitter.getAttribute("formaction")
+          : null) || form.getAttribute("action");
+      fetch(url, {
+        method: "POST",
+        body: new FormData(form),
+        headers: { Accept: "text/event-stream" },
+      })
+        .then(function (response) {
+          if (!response.ok || !response.body) {
+            throw new Error("stream unavailable");
+          }
+          var reader = response.body.getReader();
+          var decoder = new TextDecoder();
+          var buffer = "";
+          var pump = function () {
+            return reader.read().then(function (chunk) {
+              if (chunk.done) {
+                return;
+              }
+              buffer += decoder.decode(chunk.value, { stream: true });
+              var parts = buffer.split("\n\n");
+              buffer = parts.pop();
+              parts.forEach(function (part) {
+                var line = part.replace(/^data: /, "");
+                var eventData;
+                try {
+                  eventData = JSON.parse(line);
+                } catch (e) {
+                  return;
+                }
+                if (eventData.done) {
+                  clearInterval(ticker);
+                  document.open();
+                  document.write(eventData.html);
+                  document.close();
+                  return;
+                }
+                finished.push(
+                  eventData.platform +
+                    ": " +
+                    (eventData.success
+                      ? "published."
+                      : "failed: " + (eventData.error || "unknown error"))
+                );
+                renderStatus();
+              });
+              return pump();
+            });
+          };
+          return pump();
+        })
+        .catch(function () {
+          // Stream failed: fall back to a plain post, which returns
+          // the same results page in one response.
+          clearInterval(ticker);
+          form.submit();
+        });
     });
   });
 });
+function showWorking(form, button, label) {
+    if (button) {
+      button.disabled = true;
+      button.textContent = label;
+    }
+    var status = document.createElement("p");
+    status.className = "dim";
+    status.setAttribute("role", "status");
+    var started = Date.now();
+    var renderStatus = function () {
+      var elapsed = Math.floor((Date.now() - started) / 1000);
+      status.textContent =
+        label + " " + elapsed + "s elapsed. This can take a while for slow platforms.";
+    };
+    renderStatus();
+    form.appendChild(status);
+    setInterval(renderStatus, 1000);
+  }

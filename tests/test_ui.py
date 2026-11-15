@@ -5,6 +5,7 @@ touched. The service layer itself is tested against a temporary
 content directory for article discovery and saving.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -102,6 +103,9 @@ class FakeService:
             },
         ]
 
+    def publish_article_iter(self, path, platforms, draft):
+        yield from self.publish_article(path, platforms, draft)
+
     def schedule_article(self, path, platforms, when, draft):
         if when == "raise-bad-time":
             raise ValueError("Could not parse schedule time: raise-bad-time")
@@ -150,6 +154,13 @@ class FakeService:
 @pytest.fixture()
 def client():
     return TestClient(create_app(service=FakeService()))
+
+
+def test_pages_carry_brand_home_link(client):
+    for page in ("/articles", "/platforms", "/schedule"):
+        response = client.get(page)
+        assert response.status_code == 200
+        assert "<a class='brand' href='/articles'>Outpour</a>" in response.text
 
 
 def test_articles_page_lists_titles_and_ledger_status(client):
@@ -374,6 +385,63 @@ def test_publish_results_link_live_url_and_offer_next_steps(client):
     assert "Back to articles" in response.text
     assert "Edit this article" in response.text
     assert "/editor?path=/content/first.md" in response.text
+
+
+def test_publish_streams_one_event_per_platform(client):
+    response = client.post(
+        "/publish",
+        data={"path": "/content/first.md", "platforms": ["devto", "medium"], "draft": "1"},
+        headers={"Accept": "text/event-stream"},
+    )
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    events = []
+    for part in response.text.split("\n\n"):
+        part = part.strip()
+        if part.startswith("data: "):
+            events.append(json.loads(part[len("data: "):]))
+    assert len(events) == 3
+    assert events[0]["platform"] == "devto"
+    assert events[0]["success"] is True
+    assert events[0]["done"] is False
+    assert events[1]["platform"] == "medium"
+    assert events[1]["success"] is False
+    assert events[1]["error"] == "medium is in manual mode (not API)"
+    assert events[2]["done"] is True
+    assert "Publish results" in events[2]["html"]
+    assert "https://dev.to/x/first" in events[2]["html"]
+    assert "manual mode (not API)" in events[2]["html"]
+
+
+def test_publish_stream_falls_back_without_iter_method():
+    class ListOnlyService:
+        def publish_article(self, path, platforms, draft):
+            return FakeService().publish_article(path, platforms, draft)
+
+    response = TestClient(create_app(service=ListOnlyService())).post(
+        "/publish",
+        data={"path": "/content/first.md", "platforms": ["devto", "medium"], "draft": "1"},
+        headers={"Accept": "text/event-stream"},
+    )
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    events = []
+    for part in response.text.split("\n\n"):
+        part = part.strip()
+        if part.startswith("data: "):
+            events.append(json.loads(part[len("data: "):]))
+    assert len(events) == 3
+    assert events[0]["platform"] == "devto"
+    assert events[2]["done"] is True
+
+
+def test_static_js_streams_publish_progress(client):
+    response = client.get("/static/app.js")
+    assert response.status_code == 200
+    assert "text/event-stream" in response.text
+    assert "Now publishing to" in response.text
+    assert "document.write" in response.text
+    assert "form.submit()" in response.text
 
 
 def test_schedule_results_offer_next_steps(client):
@@ -616,6 +684,34 @@ def test_service_save_round_trip(tmp_path, monkeypatch):
     assert loaded["title"] == "Saved Article"
     assert loaded["tags"] == ["ai", "seo"]
     assert loaded["body"].startswith("# Body")
+
+
+def test_service_publish_iter_matches_publish_list(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    content = tmp_path / "content"
+    content.mkdir()
+    article = content / "first.md"
+    article.write_text("---\ntitle: First\n---\n\nBody.")
+    monkeypatch.setattr(ui_service.config, "get_content_paths", lambda: [str(content)])
+    monkeypatch.setattr(ui_service.config, "get_project_root", lambda: tmp_path)
+
+    def fake_record(request, silent=True):
+        return SimpleNamespace(
+            result=SimpleNamespace(
+                success=True,
+                url=f"https://example.com/{request.platform}",
+                article_id="1",
+                error=None,
+            )
+        )
+
+    monkeypatch.setattr(ui_service, "publish_and_record", fake_record)
+    listed = ui_service.publish_article(str(article), ["devto", "medium"], False)
+    streamed = list(ui_service.publish_article_iter(str(article), ["devto", "medium"], False))
+    assert listed == streamed
+    assert [item["platform"] for item in streamed] == ["devto", "medium"]
+    assert all(item["success"] for item in streamed)
 
 
 def test_serve_command_binds_localhost_only(monkeypatch):

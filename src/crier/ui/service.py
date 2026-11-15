@@ -246,6 +246,42 @@ def list_platforms() -> list[dict[str, Any]]:
     return platforms
 
 
+def publish_article_iter(path: str, platforms: list[str], draft: bool):
+    """Publish now, yielding one result per platform as it finishes.
+
+    publish_article consumes this; the web UI streams these results
+    so the progress line can name each platform as it completes
+    instead of waiting for all of them. One platform's failure never
+    blocks the others, and every result (including the error text)
+    is yielded for the results page. Idempotency comes from
+    publish_and_record: a re-publish updates the existing ledger
+    entry instead of duplicating it.
+    """
+    resolved = resolve_article_path(path)
+    for platform in platforms:
+        try:
+            outcome = publish_and_record(
+                PublishRequest(resolved, platform, draft=draft),
+                silent=True,
+            )
+            result = outcome.result
+            yield {
+                "platform": platform,
+                "success": bool(result.success),
+                "url": result.url,
+                "article_id": result.article_id,
+                "error": result.error,
+            }
+        except Exception as exc:  # noqa: BLE001 - report honestly, keep going
+            yield {
+                "platform": platform,
+                "success": False,
+                "url": None,
+                "article_id": None,
+                "error": str(exc),
+            }
+
+
 def publish_article(path: str, platforms: list[str], draft: bool) -> list[dict[str, Any]]:
     """Publish now, via the existing publish_and_record code path.
 
@@ -254,35 +290,7 @@ def publish_article(path: str, platforms: list[str], draft: bool) -> list[dict[s
     Idempotency comes from publish_and_record: a re-publish updates
     the existing ledger entry instead of duplicating it.
     """
-    resolved = resolve_article_path(path)
-    results: list[dict[str, Any]] = []
-    for platform in platforms:
-        try:
-            outcome = publish_and_record(
-                PublishRequest(resolved, platform, draft=draft),
-                silent=True,
-            )
-            result = outcome.result
-            results.append(
-                {
-                    "platform": platform,
-                    "success": bool(result.success),
-                    "url": result.url,
-                    "article_id": result.article_id,
-                    "error": result.error,
-                }
-            )
-        except Exception as exc:  # noqa: BLE001 - report honestly, keep going
-            results.append(
-                {
-                    "platform": platform,
-                    "success": False,
-                    "url": None,
-                    "article_id": None,
-                    "error": str(exc),
-                }
-            )
-    return results
+    return list(publish_article_iter(path, platforms, draft))
 
 
 def schedule_article(
@@ -370,6 +378,9 @@ class UIService:
 
     def publish_article(self, path: str, platforms: list[str], draft: bool) -> list[dict[str, Any]]:
         return publish_article(path, platforms, draft)
+
+    def publish_article_iter(self, path: str, platforms: list[str], draft: bool):
+        return publish_article_iter(path, platforms, draft)
 
     def schedule_article(
         self, path: str, platforms: list[str], when: str, draft: bool

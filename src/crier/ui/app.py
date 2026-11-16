@@ -34,7 +34,7 @@ th,td{border:1px solid var(--border);padding:.5rem;text-align:left;vertical-alig
 .ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--muted)}
 label{display:block;margin:.5rem 0 .25rem} input[type=text],input[type=datetime-local],textarea{width:100%;padding:.5rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit}
 textarea{height:22rem} button{padding:.5rem 1rem;margin-top:1rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit;cursor:pointer}
-fieldset{margin:1rem 0;border:1px solid var(--border)} .card{border:1px solid var(--border);padding:1rem;margin:1rem 0}
+.platform-group{margin:2rem 0 1rem} .platform-group h3{margin:0 0 .25rem} .card{margin:2rem 0}
 button.primary{background:var(--primary);color:#fff;border:1px solid var(--primary)}
 .hosted{color:var(--hosted);font-size:.85rem}
 .theme-toggle{float:right;margin-top:.5rem}
@@ -110,10 +110,14 @@ def _platform_checkboxes(service: Any, selected: set[str] | None = None, disable
                 f"{_esc(name)}{_esc(note)}</label>"
             )
         if boxes:
+            # Grouping is by proximity and similarity, not boxes: the
+            # group heading shares the h3 style every other section
+            # uses, and the 2rem top margin separates it from the
+            # group above. No fieldset border.
             out.append(
-                f"<fieldset><legend>{legend}</legend><p class='dim'>{hint}</p>"
+                f"<div class='platform-group'><h3>{legend}</h3><p class='dim'>{hint}</p>"
                 + "".join(boxes)
-                + "</fieldset>"
+                + "</div>"
             )
     return "".join(out)
 

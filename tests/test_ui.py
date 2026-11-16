@@ -540,6 +540,23 @@ def test_css_spacing_uses_one_scale():
                 assert token in {"0", "auto"}, token
 
 
+def test_platform_groups_use_proximity_not_boxes(client):
+    # Checklist dimension 4: grouping by proximity and similarity,
+    # not boxes and borders. Platform groups render as plain divs
+    # with a shared h3 heading, and the CSS carries no fieldset
+    # rule and no border on .card or .platform-group.
+    response = client.get("/editor", params={"path": "/content/first.md"})
+    assert response.status_code == 200
+    assert "class='platform-group'" in response.text
+    assert "<h3>Long-form platforms</h3>" in response.text
+    assert "<fieldset" not in response.text
+    assert "fieldset" not in CSS
+    card_rule = re.search(r"\.card\{([^}]*)\}", CSS).group(1)
+    assert "border" not in card_rule
+    group_rule = re.search(r"\.platform-group\{([^}]*)\}", CSS).group(1)
+    assert "border" not in group_rule
+
+
 def test_pages_have_dark_mode_toggle_and_theme_script(client):
     response = client.get("/articles")
     assert response.status_code == 200

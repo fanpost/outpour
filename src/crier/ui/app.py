@@ -23,21 +23,29 @@ from .. import scheduler
 from .service import UIService
 
 CSS = """
-:root{--bg:#fdfdfa;--fg:#1a1a1a;--muted:#5c5c58;--border:#c9c9c2;--field:#fff;--ok:#067647;--bad:#b42318;--link:#0b5cab;--primary:#0b5cab;--hosted:#4c4c48}
-:root[data-theme=dark]{--bg:#14161a;--fg:#e9e6df;--muted:#a3a099;--border:#3c4149;--field:#1d2026;--ok:#4cc38a;--bad:#ff8a7a;--link:#8ab4f8;--primary:#2f7fd0;--hosted:#b6b0a4;color-scheme:dark}
-body{font-family:'Courier Prime','Courier New',Courier,monospace;letter-spacing:.01em;background:var(--bg);max-width:900px;margin:2rem auto;padding:0 1rem;color:var(--fg)}
-a{color:var(--link)}
+/* Color: one primary plus luminosity-varied grays. Status is carried by
+that primary (published) and by the darkest gray in bold (failed); the
+words Published/Failed carry the meaning, so no second hue is needed.
+Layout: a strict 12-column grid with 1rem gutters. Every block sits on
+it, and the header row splits brand (cols 1-9) from the theme toggle
+(cols 10-12) on grid columns. */
+:root{--bg:#fdfdfa;--fg:#1a1a1a;--muted:#5c5c58;--border:#c9c9c2;--field:#fff;--primary:#0b5cab;--hosted:#4c4c48}
+:root[data-theme=dark]{--bg:#14161a;--fg:#e9e6df;--muted:#a3a099;--border:#3c4149;--field:#1d2026;--primary:#2f7fd0;--hosted:#b6b0a4;color-scheme:dark}
+body{font-family:'Courier Prime','Courier New',Courier,monospace;letter-spacing:.01em;background:var(--bg);max-width:900px;margin:2rem auto;padding:0 1rem;color:var(--fg);display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:1rem}
+body>*{grid-column:1/-1}
+body>h1{grid-column:1/10;grid-row:1}
+body>.theme-toggle{grid-column:10/-1;justify-self:end;grid-row:1;margin-top:.5rem}
+a{color:var(--primary)}
 .brand{color:var(--fg);text-decoration:none}
 h1{font-size:1.75rem} h2{font-size:1.25rem} h3{font-size:1rem}
 nav a{margin-right:1rem} table{border-collapse:collapse;width:100%}
 th,td{border:1px solid var(--border);padding:.5rem;text-align:left;vertical-align:top}
-.ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--muted)}
+.ok{color:var(--primary)}.bad{color:var(--fg);font-weight:700}.dim{color:var(--muted)}
 label{display:block;margin:.5rem 0 .25rem} input[type=text],input[type=datetime-local],textarea{width:100%;padding:.5rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit}
 textarea{height:22rem} button{padding:.5rem 1rem;margin-top:1rem;background:var(--field);color:var(--fg);border:1px solid var(--border);font-family:inherit;cursor:pointer}
 .platform-group{margin:2rem 0 1rem} .platform-group h3{margin:0 0 .25rem} .card{margin:2rem 0}
 button.primary{background:var(--primary);color:#fff;border:1px solid var(--primary)}
 .hosted{color:var(--hosted);font-size:.85rem}
-.theme-toggle{float:right;margin-top:.5rem}
 .statusline{display:flex;gap:1rem;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:.25rem 0;margin-top:.5rem}
 nav,h1,h2,.card,.hosted,.theme-toggle{transition:opacity .25s}
 body.focus nav,body.focus h1,body.focus h2,body.focus .card,body.focus .hosted,body.focus .theme-toggle{opacity:.15}

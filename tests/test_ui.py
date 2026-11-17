@@ -547,6 +547,40 @@ def test_css_spacing_uses_one_scale():
                 assert token in {"0", "auto"}, token
 
 
+def test_css_color_uses_one_primary_plus_grays():
+    # Checklist dimension 4: color is built from one primary plus
+    # luminosity-varied grays. The old green/red status hues are gone:
+    # published uses the primary, failed uses the darkest gray in
+    # bold, and the words Published/Failed carry the meaning.
+    assert "--ok:" not in CSS
+    assert "--bad:" not in CSS
+    assert "--link:" not in CSS
+    for hue in ("#067647", "#b42318", "#4cc38a", "#ff8a7a"):
+        assert hue not in CSS
+    ok_rule = re.search(r"\.ok\{([^}]*)\}", CSS).group(1)
+    assert "var(--primary)" in ok_rule
+    bad_rule = re.search(r"\.bad\{([^}]*)\}", CSS).group(1)
+    assert "var(--fg)" in bad_rule
+    assert "700" in bad_rule
+
+
+def test_css_uses_strict_alignment_grid(client):
+    # Checklist dimension 4: a strict alignment grid. The page is a
+    # 12-column grid with 1rem gutters, every block sits on it, and
+    # the header row splits brand from theme toggle on grid columns
+    # instead of a float.
+    assert "display:grid" in CSS
+    assert "grid-template-columns:repeat(12,minmax(0,1fr))" in CSS
+    assert "body>*{grid-column:1/-1}" in CSS
+    assert "body>h1{grid-column:1/10;grid-row:1}" in CSS
+    assert "body>.theme-toggle{grid-column:10/-1" in CSS
+    assert "float" not in CSS
+    response = client.get("/articles")
+    assert response.status_code == 200
+    assert "id='theme-toggle'" in response.text
+    assert "class='brand'" in response.text
+
+
 def test_platform_groups_use_proximity_not_boxes(client):
     # Checklist dimension 4: grouping by proximity and similarity,
     # not boxes and borders. Platform groups render as plain divs

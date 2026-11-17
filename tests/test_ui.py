@@ -512,6 +512,13 @@ def test_hosted_strip_names_price_and_founding_lock(client):
     assert "founding price" in response.text
 
 
+def test_hosted_strip_shows_verified_star_count(client):
+    response = client.get("/articles")
+    assert response.status_code == 200
+    assert "1 star on GitHub" in response.text
+    assert "https://github.com/fanpost/outpour" in response.text
+
+
 def test_platforms_page_states_keys_stay_local(client):
     response = client.get("/platforms")
     assert response.status_code == 200

@@ -49,12 +49,19 @@ WAITLIST_URL = (
     "idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform"
 )
 
+REPO_URL = "https://github.com/fanpost/outpour"
+
+# Star count verified live 2026-11-16 (REST + repo page: 1 star, 0 forks).
+# It is a real, specific number, so it is shown plainly with a link to
+# check it; if the count changes, the test below fails and the line is
+# updated, so the UI never shows a stale number silently.
 HOSTED_STRIP = (
     "<hr><p class='hosted'>Running Outpour on your own machine. Prefer not to? "
     "A hosted version is in the works: we run it, you just write. "
     "Expected $19 a month. Join the waitlist and you lock that founding price for good. "
     f"<a href='{WAITLIST_URL}' target='_blank' rel='noopener'>"
-    "Join the hosted waitlist</a></p>"
+    "Join the hosted waitlist</a>. "
+    f"Outpour has <a href='{REPO_URL}' target='_blank' rel='noopener'>1 star on GitHub</a>.</p>"
 )
 
 

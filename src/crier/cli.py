@@ -725,7 +725,7 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                     console.print("\n[dim]Use --no-check to skip validation.[/dim]")
                 raise SystemExit(1)
 
-            # Warnings present but no errors — show and continue
+            # Warnings present but no errors: show each one, then continue
             if not silent:
                 warning_count = sum(1 for r in report.results if r.severity == "warning")
                 info_count = sum(1 for r in report.results if r.severity == "info")
@@ -734,7 +734,11 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                     parts.append(f"{warning_count} warning{'s' if warning_count != 1 else ''}")
                 if info_count:
                     parts.append(f"{info_count} info")
-                console.print(f"[dim]Pre-publish check: {', '.join(parts)}. Continuing...[/dim]")
+                console.print(f"[dim]Pre-publish check: {', '.join(parts)}:[/dim]")
+                for r in report.results:
+                    label = _severity_label(r.severity)
+                    console.print(f"  {label} {r.check_name}: {r.message}")
+                console.print("[dim]Continuing...[/dim]")
 
     # Materialize --rewrite-file into rewrite_content before any branch
     # consumes it. The scheduling branch below returns early, so reading
@@ -957,6 +961,17 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                 platform = platform_cls(api_key or "dry-run")
                 max_len = platform.max_content_length
 
+                # A malformed credential fails here, in the preview,
+                # instead of only at real publish time.
+                cred_error = platform.validate_credentials()
+                if cred_error:
+                    platform_table.add_row(
+                        platform_name,
+                        "[red]✗ Bad credentials[/red]",
+                        cred_error,
+                    )
+                    continue
+
                 # Check if auto-rewrite would be triggered
                 if auto_rewrite and llm_provider and max_len and len(article.body) > max_len:
                     platform_table.add_row(
@@ -992,10 +1007,16 @@ def publish(file: str, platform_args: tuple[str, ...], profile_name: str | None,
                         f"{len(article.body)} > {max_len} chars (use --rewrite or --auto-rewrite)"
                     )
                 else:
+                    notes = "Would publish"
+                    if article.tags:
+                        effective = platform.preview_tags(article.tags)
+                        if effective != article.tags:
+                            sent = ", ".join(effective) if effective else "none (all dropped)"
+                            notes = f"Would publish. Tags as sent: {sent}"
                     platform_table.add_row(
                         platform_name,
                         "[green]✓ Ready[/green]",
-                        "Would publish"
+                        notes,
                     )
 
         console.print(platform_table)

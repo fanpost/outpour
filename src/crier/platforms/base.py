@@ -128,6 +128,27 @@ class Platform(ABC):
         """
         return article.body
 
+    def preview_tags(self, tags: list[str]) -> list[str]:
+        """Tags as this platform will actually send them.
+
+        Override in subclasses that transform tags before sending
+        (Dev.to strips non-alphanumerics and caps at 4, for example).
+        The dry-run preview shows the result so a user is never
+        surprised by silent sanitizing at publish time. Default:
+        the tags unchanged.
+        """
+        return list(tags)
+
+    def validate_credentials(self) -> str | None:
+        """Validate the configured credential without a network call.
+
+        Returns an error message when the credential is malformed
+        (a bad Nostr key, for example), else None. The dry-run
+        preview calls this so a bad credential fails early instead
+        of only at real publish time. Default: nothing to validate.
+        """
+        return None
+
     def _check_content_length(self, content: str) -> str | None:
         """Check if content exceeds platform limit.
 

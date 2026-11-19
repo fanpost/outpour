@@ -119,6 +119,14 @@ class Nostr(Platform):
             return PrivateKey.from_nsec(self.secret)
         return PrivateKey.from_hex(self.secret)
 
+    def validate_credentials(self) -> str | None:
+        """Check the private key parses before any publish is attempted."""
+        try:
+            self._load_key()
+        except Exception as e:
+            return str(e)
+        return None
+
     def _compose(self, article: Article) -> str:
         if article.is_rewrite:
             return self._append_canonical_url(article.body, article)

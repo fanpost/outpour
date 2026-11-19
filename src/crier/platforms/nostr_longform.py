@@ -112,6 +112,14 @@ class NostrLongform(Platform):
             return PrivateKey.from_nsec(self.secret)
         return PrivateKey.from_hex(self.secret)
 
+    def validate_credentials(self) -> str | None:
+        """Check the private key parses before any publish is attempted."""
+        try:
+            self._load_key()
+        except Exception as e:
+            return str(e)
+        return None
+
     def _signed_event(self, content: str, kind: int, tags: list | None = None):
         """Build and sign a Nostr event (lazy import; raises if extra missing)."""
         try:

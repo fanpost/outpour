@@ -42,6 +42,10 @@ class DevTo(Platform):
             "Content-Type": "application/json",
         }
 
+    def preview_tags(self, tags: list[str]) -> list[str]:
+        """Dev.to sends the sanitized form, so the preview shows it."""
+        return sanitize_tags(tags)
+
     def publish(self, article: Article) -> PublishResult:
         """Publish an article to dev.to."""
         data = {

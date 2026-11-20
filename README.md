@@ -4,12 +4,12 @@
 
 # Outpour
 
-## Outpour lets you schedule and publish long-form articles on Dev.to, Medium, Hashnode and Nostr from any markdown editor. [Try now 👇](https://github.com/fanpost/Outpour/blob/master/README.md#quick-start).
+## Outpour lets you schedule and publish long-form articles on Dev.to, Medium, Hashnode and Nostr from any markdown editor. [Try now 👇](https://github.com/fanpost/outpour/blob/master/README.md#quick-start).
 Want it hosted? [Sign up here](https://docs.google.com/forms/d/e/1FAIpQLSe3qMXj-idw8vcJe9swefxvUgUjifLGqTiIwkvAi188b6Nc2g/viewform)
 
 You wrote a long-form article or essay. Outpour automates the distribution.
 
-Paste into different editors, fix the formatting four times, re-upload the images, and re-type the tags, Outpour removes that tax: write it once in Markdown, run one command, and it goes to every platform, now or at a scheduled time.
+You paste it into four different editors, fix the formatting four times, re-upload the images, and re-type the tags. Outpour removes that tax: write it once in Markdown, run one command, and it goes to every platform, now or at a scheduled time.
 
 Run the command again after an edit and Outpour updates those exact posts. It never publishes the same piece twice.
 
